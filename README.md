@@ -199,3 +199,4 @@ JWT_SECRET=<strong-random-key>
 NODE_ENV=production
 FRONTEND_URL=https://your-domain.com
 ```
+
