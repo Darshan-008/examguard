@@ -31,7 +31,7 @@
 // ─── CONFIGURATION ────────────────────────────────────────────────────────────
 const char* WIFI_SSID       = "Iqoo";
 const char* WIFI_PASSWORD   = "123456789";
-const char* BACKEND_URL     = "http://10.245.57.134:5000";  // Backend server IP
+const char* BACKEND_URL     = "https://examguard-backend-c4oe.onrender.com"; // Render URL
 const char* DEVICE_ID       = "ESP32-A101";                 // Must match DB deviceId
 const char* CLASSROOM_ID    = "";                           // MongoDB Classroom _id (optional)
 
@@ -71,6 +71,7 @@ void sendDetection(const char* macAddress, int rssi, const char* deviceName, uin
   HTTPClient http;
   String url = String(BACKEND_URL) + "/api/detection";
   http.begin(url);
+  http.setInsecure(); // Required for HTTPS
   http.addHeader("Content-Type", "application/json");
 
   StaticJsonDocument<512> doc;
@@ -101,6 +102,7 @@ void sendHeartbeat() {
   HTTPClient http;
   String url = String(BACKEND_URL) + "/api/devices/heartbeat";
   http.begin(url);
+  http.setInsecure(); // Required for HTTPS
   http.addHeader("Content-Type", "application/json");
 
   StaticJsonDocument<128> doc;

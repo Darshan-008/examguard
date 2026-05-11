@@ -15,10 +15,13 @@ connectDB();
 const app = express();
 const server = http.createServer(app);
 
+// Clean the Frontend URL (removes trailing slash if present)
+const frontendUrl = (process.env.FRONTEND_URL || 'http://localhost:3000').replace(/\/$/, '');
+
 // Socket.IO setup
 const io = new Server(server, {
   cors: {
-    origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+    origin: frontendUrl,
     methods: ['GET', 'POST'],
     credentials: true,
   },
@@ -35,7 +38,7 @@ app.use(helmet({ contentSecurityPolicy: false }));
 
 // CORS
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  origin: frontendUrl,
   credentials: true,
 }));
 
