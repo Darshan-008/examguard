@@ -158,7 +158,7 @@ export default function MonitoringDashboard() {
   const [roomLogs, setRoomLogs] = useState([]);
   const [logsLoading, setLogsLoading] = useState(false);
 
-  const { on, off, emit } = useSocket();
+  const { on, off, emit, connected } = useSocket();
   const audioEnabled = useRef(true);
   const [voiceEnabled, setVoiceEnabled] = useState(() => {
     return localStorage.getItem('voiceAlertsEnabled') !== 'false';
@@ -283,6 +283,10 @@ export default function MonitoringDashboard() {
           <p className="text-slate-400 text-sm mt-1">Real-time classroom Bluetooth surveillance</p>
         </div>
         <div className="flex items-center gap-3">
+          <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border ${connected ? 'bg-success-500/10 border-success-500/20 text-success-400' : 'bg-danger-500/10 border-danger-500/20 text-danger-400'}`}>
+            <div className={`w-2 h-2 rounded-full ${connected ? 'bg-success-500 animate-pulse' : 'bg-danger-500'}`} />
+            <span className="text-[10px] font-bold uppercase tracking-wider">{connected ? 'Socket Connected' : 'Socket Disconnected'}</span>
+          </div>
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/5 border border-white/10">
             <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Voice Alerts</span>
             <button 
