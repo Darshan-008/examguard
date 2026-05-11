@@ -154,14 +154,14 @@ export default function Infrastructure() {
   };
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <div className="flex items-center justify-between">
+    <div className="space-y-4 sm:space-y-6 animate-fade-in">
+      <div className="flex items-start sm:items-center justify-between gap-3">
         <div>
-          <h2 className="text-2xl font-bold text-white">Campus Infrastructure</h2>
-          <p className="text-slate-400 text-sm mt-1">Manage Blocks, Floors, and Classrooms in one view</p>
+          <h2 className="text-xl sm:text-2xl font-bold text-white">Campus Infrastructure</h2>
+          <p className="text-slate-400 text-xs sm:text-sm mt-1">Manage Blocks, Floors, and Classrooms</p>
         </div>
-        <button onClick={handleAddBlock} className="btn-primary">
-          <RiAddLine /> Add Block
+        <button onClick={handleAddBlock} className="btn-primary flex-shrink-0">
+          <RiAddLine /><span className="hidden sm:inline">Add Block</span><span className="sm:hidden">Add</span>
         </button>
       </div>
 

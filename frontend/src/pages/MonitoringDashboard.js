@@ -276,19 +276,19 @@ export default function MonitoringDashboard() {
   const safeCount    = classrooms.filter(r => !r.alertStatus && r.esp32DeviceId?.status === 'online').length;
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <div className="flex items-center justify-between flex-wrap gap-4">
+    <div className="space-y-4 sm:space-y-6 animate-fade-in">
+      <div className="flex items-start sm:items-center justify-between flex-wrap gap-3">
         <div>
-          <h2 className="text-2xl font-bold text-white">Live Monitoring Dashboard</h2>
-          <p className="text-slate-400 text-sm mt-1">Real-time classroom Bluetooth surveillance</p>
+          <h2 className="text-xl sm:text-2xl font-bold text-white">Live Monitoring</h2>
+          <p className="text-slate-400 text-xs sm:text-sm mt-1">Real-time classroom Bluetooth surveillance</p>
         </div>
-        <div className="flex items-center gap-3">
-          <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border ${connected ? 'bg-success-500/10 border-success-500/20 text-success-400' : 'bg-danger-500/10 border-danger-500/20 text-danger-400'}`}>
+        <div className="flex flex-wrap items-center gap-2">
+          <div className={`flex items-center gap-1.5 px-2 py-1.5 rounded-xl border ${connected ? 'bg-success-500/10 border-success-500/20 text-success-400' : 'bg-danger-500/10 border-danger-500/20 text-danger-400'}`}>
             <div className={`w-2 h-2 rounded-full ${connected ? 'bg-success-500 animate-pulse' : 'bg-danger-500'}`} />
-            <span className="text-[10px] font-bold uppercase tracking-wider">{connected ? 'Socket Connected' : 'Socket Disconnected'}</span>
+            <span className="text-[10px] font-bold uppercase tracking-wider">{connected ? 'Connected' : 'Disconnected'}</span>
           </div>
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/5 border border-white/10">
-            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Voice Alerts</span>
+            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Voice</span>
             <button 
               onClick={toggleVoice}
               className={`relative inline-flex h-5 w-10 items-center rounded-full transition-colors focus:outline-none ${voiceEnabled ? 'bg-primary-600' : 'bg-slate-700'}`}
@@ -299,7 +299,7 @@ export default function MonitoringDashboard() {
           <button onClick={fetchClassrooms} disabled={loading}
             className="btn-ghost text-sm disabled:opacity-50">
             <RiRefreshLine className={loading ? 'animate-spin' : ''} />
-            {loading ? 'Refreshing...' : 'Refresh'}
+            <span className="hidden sm:inline">{loading ? 'Refreshing...' : 'Refresh'}</span>
           </button>
         </div>
       </div>
@@ -322,9 +322,9 @@ export default function MonitoringDashboard() {
 
       {/* Filters */}
       <div className="flex gap-2 flex-wrap">
-        {[['all','All Rooms'],['alert','🔴 Alerts'],['safe','🟢 Safe'],['offline','⚫ Offline']].map(([val,label]) => (
+        {[['all','All'],['alert','🔴 Alerts'],['safe','🟢 Safe'],['offline','⚫ Offline']].map(([val,label]) => (
           <button key={val} onClick={() => setFilter(val)}
-            className={`px-4 py-2 rounded-xl text-sm font-medium border transition-all ${
+            className={`px-3 sm:px-4 py-2 rounded-xl text-xs sm:text-sm font-medium border transition-all ${
               filter === val
                 ? 'bg-primary-600/20 border-primary-500/40 text-primary-400'
                 : 'bg-white/5 border-white/10 text-slate-400 hover:text-white hover:bg-white/8'
@@ -366,8 +366,8 @@ export default function MonitoringDashboard() {
 
       {/* ROOM HISTORY MODAL */}
       {selectedRoom && (
-        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-center justify-center z-50 p-4">
-          <div className="glass-strong w-full max-w-2xl h-[80vh] flex flex-col shadow-2xl animate-fade-in overflow-hidden border-white/20">
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-md flex items-end sm:items-center justify-center z-50 p-0 sm:p-4">
+          <div className="glass-strong w-full max-w-2xl h-[90vh] sm:h-[80vh] flex flex-col shadow-2xl animate-fade-in overflow-hidden border-white/20 rounded-t-3xl sm:rounded-2xl">
             {/* Modal Header */}
             <div className="flex items-center justify-between px-6 py-4 border-b border-white/10 bg-white/5">
               <div>

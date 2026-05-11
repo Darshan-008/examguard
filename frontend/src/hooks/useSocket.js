@@ -9,11 +9,24 @@ const useSocket = () => {
     const s = connectSocket();
     setSocket(s);
 
-    s.on('connect', () => setConnected(true));
-    s.on('disconnect', () => setConnected(false));
+    s.on('connect', () => {
+      console.log('[Socket] Connected successfully!');
+      setConnected(true);
+    });
+    
+    s.on('connect_error', (err) => {
+      console.error('[Socket Error]', err.message);
+      setConnected(false);
+    });
+
+    s.on('disconnect', () => {
+      console.log('[Socket] Disconnected');
+      setConnected(false);
+    });
 
     return () => {
       s.off('connect');
+      s.off('connect_error');
       s.off('disconnect');
       disconnectSocket();
     };

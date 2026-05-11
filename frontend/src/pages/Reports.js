@@ -52,16 +52,16 @@ export default function Reports() {
   const hotRoom = analytics?.classroomHeatmap?.[0];
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <div className="flex items-center justify-between flex-wrap gap-4">
+    <div className="space-y-4 sm:space-y-6 animate-fade-in">
+      <div className="flex items-start sm:items-center justify-between flex-wrap gap-3">
         <div>
-          <h2 className="text-2xl font-bold text-white">Reports & Analytics</h2>
-          <p className="text-slate-400 text-sm mt-1">Detection patterns and statistics</p>
+          <h2 className="text-xl sm:text-2xl font-bold text-white">Reports &amp; Analytics</h2>
+          <p className="text-slate-400 text-xs sm:text-sm mt-1">Detection patterns and statistics</p>
         </div>
         <div className="flex gap-2">
           {[7, 14, 30].map(d => (
             <button key={d} onClick={() => setDays(d)}
-              className={`px-4 py-2 rounded-xl text-sm font-medium border transition-all ${
+              className={`px-3 sm:px-4 py-2 rounded-xl text-sm font-medium border transition-all ${
                 days === d ? 'bg-primary-600/20 border-primary-500/40 text-primary-400' : 'bg-white/5 border-white/10 text-slate-400 hover:text-white'}`}>
               {d}d
             </button>

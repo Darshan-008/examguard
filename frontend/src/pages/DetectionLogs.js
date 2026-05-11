@@ -88,25 +88,25 @@ export default function DetectionLogs() {
   };
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <div className="flex items-center justify-between flex-wrap gap-4">
+    <div className="space-y-4 sm:space-y-6 animate-fade-in">
+      <div className="flex items-start sm:items-center justify-between flex-wrap gap-3">
         <div>
-          <h2 className="text-2xl font-bold text-white">Detection Logs</h2>
-          <p className="text-slate-400 text-sm mt-1">{pagination.total || 0} total records</p>
+          <h2 className="text-xl sm:text-2xl font-bold text-white">Detection Logs</h2>
+          <p className="text-slate-400 text-xs sm:text-sm mt-1">{pagination.total || 0} total records</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex gap-2 flex-wrap">
           {JSON.parse(localStorage.getItem('user') || '{}').role === 'admin' && (
             <button onClick={handleClearLogs} className="btn-ghost text-sm text-danger-400 hover:bg-danger-500/10">
-              Clear All Logs
+              Clear Logs
             </button>
           )}
-          <button onClick={exportCSV} className="btn-ghost text-sm"><RiDownloadLine />Export CSV</button>
+          <button onClick={exportCSV} className="btn-ghost text-sm"><RiDownloadLine /><span className="hidden sm:inline">Export CSV</span><span className="sm:hidden">Export</span></button>
         </div>
       </div>
 
       {/* Filters */}
-      <div className="glass p-4 flex flex-wrap gap-4 items-end">
-        <div className="flex-1 min-w-48">
+      <div className="glass p-4 flex flex-col sm:flex-row flex-wrap gap-3 items-start sm:items-end">
+        <div className="flex-1 min-w-0 w-full sm:min-w-48">
           <label className="label">Search MAC Address</label>
           <div className="relative">
             <RiSearchLine className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500" />
@@ -114,20 +114,22 @@ export default function DetectionLogs() {
               value={search} onChange={e => setSearch(e.target.value)} />
           </div>
         </div>
-        <div>
+        <div className="w-full sm:w-auto">
           <label className="label">From Date</label>
-          <input type="date" className="input" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
+          <input type="date" className="input w-full" value={dateFrom} onChange={e => setDateFrom(e.target.value)} />
         </div>
-        <div>
+        <div className="w-full sm:w-auto">
           <label className="label">To Date</label>
-          <input type="date" className="input" value={dateTo} onChange={e => setDateTo(e.target.value)} />
+          <input type="date" className="input w-full" value={dateTo} onChange={e => setDateTo(e.target.value)} />
         </div>
-        <button onClick={() => fetchLogs(1)} className="btn-primary h-11">
-          <RiFilterLine />Filter
-        </button>
-        <button onClick={() => { setSearch(''); setDateFrom(''); setDateTo(''); }} className="btn-ghost h-11">
-          Clear
-        </button>
+        <div className="flex gap-2 w-full sm:w-auto">
+          <button onClick={() => fetchLogs(1)} className="btn-primary flex-1 sm:flex-none h-11">
+            <RiFilterLine />Filter
+          </button>
+          <button onClick={() => { setSearch(''); setDateFrom(''); setDateTo(''); }} className="btn-ghost flex-1 sm:flex-none h-11">
+            Clear
+          </button>
+        </div>
       </div>
 
       {/* Table */}
@@ -142,68 +144,100 @@ export default function DetectionLogs() {
             <p className="text-slate-400">No detection logs found</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="border-b border-white/10">
-                <tr>
-                  <th className="th">Timestamp</th><th className="th">Block</th><th className="th">Floor</th>
-                  <th className="th">Classroom</th><th className="th">ESP32</th>
-                  <th className="th">MAC Address</th><th className="th">Device</th><th className="th">Type</th>
-                  <th className="th">RSSI</th><th className="th">Distance</th><th className="th">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {logs.map((log, i) => (
-                  <tr key={log._id || i} className="table-row">
-                    <td className="td text-xs whitespace-nowrap">
-                      {new Date(log.timestamp).toLocaleString()}
-                    </td>
-                    <td className="td">{log.classroomId?.blockId?.blockName || '—'}</td>
-                    <td className="td">{log.classroomId?.floorId?.floorName || '—'}</td>
-                    <td className="td font-medium text-white">{log.classroomId?.roomName || '—'}</td>
-                    <td className="td font-mono text-xs text-slate-400">{log.esp32DeviceId?.deviceId || '—'}</td>
-                    <td className="td">
-                      <div className="flex flex-col gap-1">
-                        <div className="flex items-center gap-1.5">
-                          <MdBluetooth className="text-primary-400 flex-shrink-0" size={12}/>
-                          <span className="font-mono text-xs">{log.macAddress?.toUpperCase()}</span>
-                        </div>
-                        {log.isRandomized && (
-                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-warning-500/10 text-warning-400 border border-warning-500/20 w-fit font-bold uppercase tracking-tighter">
-                            Private MAC
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                    <td className="td text-xs text-slate-400">{log.deviceName || 'Unknown'}</td>
-                    <td className="td">
-                       <div className="flex items-center gap-2">
-                         {log.category?.includes('Phone') ? <MdSmartphone className="text-primary-400" />
-                          : log.category?.includes('Watch') ? <MdWatch className="text-warning-400" />
-                          : log.category?.includes('Computer') ? <MdComputer className="text-info-400" />
-                          : log.category?.includes('Audio') ? <MdHeadset className="text-success-400" />
-                          : <MdHelpOutline className="text-slate-500" />}
-                         <span className="text-xs text-slate-300">{log.category || 'Unknown'}</span>
-                       </div>
-                    </td>
-                    <td className="td">
-                      <span className={`font-mono text-xs ${log.rssi > -60 ? 'text-danger-400' : log.rssi > -80 ? 'text-warning-400' : 'text-slate-400'}`}>
-                        {log.rssi} dBm
-                      </span>
-                    </td>
-                    <td className="td text-xs font-semibold text-primary-300">
-                      {calculateDistance(log.rssi)}
-                    </td>
-                    <td className="td">
-                      {log.alertStatus === 'alert'
-                        ? <span className="badge-red">Alert</span>
-                        : <span className="badge-green">Cleared</span>}
-                    </td>
+          <>
+            {/* Mobile cards */}
+            <div className="md:hidden divide-y divide-white/5">
+              {logs.map((log, i) => (
+                <div key={log._id || i} className="p-4 space-y-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <p className="font-medium text-white text-sm">{log.classroomId?.roomName || '—'}</p>
+                      <p className="text-xs text-slate-500">{log.classroomId?.blockId?.blockName} • {log.classroomId?.floorId?.floorName}</p>
+                    </div>
+                    {log.alertStatus === 'alert'
+                      ? <span className="badge-red flex-shrink-0">Alert</span>
+                      : <span className="badge-green flex-shrink-0">Cleared</span>}
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <MdBluetooth className="text-primary-400" size={12}/>
+                    <span className="font-mono text-xs text-white">{log.macAddress?.toUpperCase()}</span>
+                    {log.isRandomized && (
+                      <span className="text-[9px] px-1.5 py-0.5 rounded bg-warning-500/10 text-warning-400 border border-warning-500/20 font-bold uppercase">Private</span>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-4 text-xs text-slate-400">
+                    <span>{log.deviceName || 'Unknown'}</span>
+                    <span className={log.rssi > -60 ? 'text-danger-400' : log.rssi > -80 ? 'text-warning-400' : ''}>{log.rssi} dBm</span>
+                    <span className="text-primary-300">≈ {calculateDistance(log.rssi)}</span>
+                    <span className="ml-auto">{new Date(log.timestamp).toLocaleString()}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+            {/* Desktop table */}
+            <div className="hidden md:block overflow-x-auto">
+              <table className="w-full">
+                <thead className="border-b border-white/10">
+                  <tr>
+                    <th className="th">Timestamp</th><th className="th">Block</th><th className="th">Floor</th>
+                    <th className="th">Classroom</th><th className="th">ESP32</th>
+                    <th className="th">MAC Address</th><th className="th">Device</th><th className="th">Type</th>
+                    <th className="th">RSSI</th><th className="th">Distance</th><th className="th">Status</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {logs.map((log, i) => (
+                    <tr key={log._id || i} className="table-row">
+                      <td className="td text-xs whitespace-nowrap">
+                        {new Date(log.timestamp).toLocaleString()}
+                      </td>
+                      <td className="td">{log.classroomId?.blockId?.blockName || '—'}</td>
+                      <td className="td">{log.classroomId?.floorId?.floorName || '—'}</td>
+                      <td className="td font-medium text-white">{log.classroomId?.roomName || '—'}</td>
+                      <td className="td font-mono text-xs text-slate-400">{log.esp32DeviceId?.deviceId || '—'}</td>
+                      <td className="td">
+                        <div className="flex flex-col gap-1">
+                          <div className="flex items-center gap-1.5">
+                            <MdBluetooth className="text-primary-400 flex-shrink-0" size={12}/>
+                            <span className="font-mono text-xs">{log.macAddress?.toUpperCase()}</span>
+                          </div>
+                          {log.isRandomized && (
+                            <span className="text-[9px] px-1.5 py-0.5 rounded bg-warning-500/10 text-warning-400 border border-warning-500/20 w-fit font-bold uppercase tracking-tighter">
+                              Private MAC
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                      <td className="td text-xs text-slate-400">{log.deviceName || 'Unknown'}</td>
+                      <td className="td">
+                         <div className="flex items-center gap-2">
+                           {log.category?.includes('Phone') ? <MdSmartphone className="text-primary-400" />
+                            : log.category?.includes('Watch') ? <MdWatch className="text-warning-400" />
+                            : log.category?.includes('Computer') ? <MdComputer className="text-info-400" />
+                            : log.category?.includes('Audio') ? <MdHeadset className="text-success-400" />
+                            : <MdHelpOutline className="text-slate-500" />}
+                           <span className="text-xs text-slate-300">{log.category || 'Unknown'}</span>
+                         </div>
+                      </td>
+                      <td className="td">
+                        <span className={`font-mono text-xs ${log.rssi > -60 ? 'text-danger-400' : log.rssi > -80 ? 'text-warning-400' : 'text-slate-400'}`}>
+                          {log.rssi} dBm
+                        </span>
+                      </td>
+                      <td className="td text-xs font-semibold text-primary-300">
+                        {calculateDistance(log.rssi)}
+                      </td>
+                      <td className="td">
+                        {log.alertStatus === 'alert'
+                          ? <span className="badge-red">Alert</span>
+                          : <span className="badge-green">Cleared</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
 
         {/* Pagination */}

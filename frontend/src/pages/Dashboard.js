@@ -146,14 +146,14 @@ export default function Dashboard() {
   };
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <div className="flex items-center justify-between flex-wrap gap-4">
+    <div className="space-y-4 sm:space-y-6 animate-fade-in">
+      <div className="flex items-start sm:items-center justify-between flex-wrap gap-3">
         <div>
-          <h2 className="text-2xl font-bold text-white">Admin Dashboard</h2>
-          <p className="text-slate-400 text-sm mt-1">Real-time Bluetooth detection overview</p>
+          <h2 className="text-xl sm:text-2xl font-bold text-white">Admin Dashboard</h2>
+          <p className="text-slate-400 text-xs sm:text-sm mt-1">Real-time Bluetooth detection overview</p>
         </div>
         <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/5 border border-white/10">
-          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Voice Alerts</span>
+          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Voice</span>
           <button 
             onClick={toggleVoice}
             className={`relative inline-flex h-5 w-10 items-center rounded-full transition-colors focus:outline-none ${voiceEnabled ? 'bg-primary-600' : 'bg-slate-700'}`}
@@ -167,21 +167,21 @@ export default function Dashboard() {
       {activeAlerts.length > 0 && (
         <div className="space-y-3">
           {activeAlerts.map(room => (
-            <div key={room._id} className="flex items-center justify-between p-4 rounded-2xl bg-danger-500/10 border border-danger-500/30 animate-pulse-slow">
-              <div className="flex items-center gap-4">
-                <div className="w-10 h-10 rounded-full bg-danger-500/20 flex items-center justify-center text-danger-500">
-                  <RiAlarmWarningLine size={24} className="animate-bounce" />
+            <div key={room._id} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 p-4 rounded-2xl bg-danger-500/10 border border-danger-500/30 animate-pulse-slow">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 sm:w-10 sm:h-10 rounded-full bg-danger-500/20 flex items-center justify-center text-danger-500 flex-shrink-0">
+                  <RiAlarmWarningLine size={22} className="animate-bounce" />
                 </div>
-                <div>
-                  <h4 className="text-white font-bold">Active Detection: {room.roomName}</h4>
-                  <p className="text-danger-400 text-xs font-mono uppercase tracking-wider">
-                    Target MAC: {room.lastDetectionMac || 'Unknown'}
+                <div className="min-w-0">
+                  <h4 className="text-white font-bold text-sm sm:text-base truncate">Active: {room.roomName}</h4>
+                  <p className="text-danger-400 text-xs font-mono uppercase tracking-wider truncate">
+                    MAC: {room.lastDetectionMac || 'Unknown'}
                   </p>
                 </div>
               </div>
               <button 
                 onClick={() => handleClearAlert(room._id)}
-                className="px-4 py-2 bg-danger-600 hover:bg-danger-500 text-white text-xs font-bold rounded-xl transition-all shadow-lg shadow-danger-600/20"
+                className="w-full sm:w-auto px-4 py-2 bg-danger-600 hover:bg-danger-500 text-white text-xs font-bold rounded-xl transition-all shadow-lg shadow-danger-600/20"
               >
                 Dismiss Alert
               </button>
@@ -191,9 +191,9 @@ export default function Dashboard() {
       )}
 
       {/* Stats */}
-      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
-        <StatCard icon={RiBuilding2Line}   label="Total Blocks"      value={stats?.blocks}        color="text-blue-400"   bg="bg-blue-500/10" />
-        <StatCard icon={RiStackLine}       label="Total Floors"      value={stats?.floors}        color="text-indigo-400" bg="bg-indigo-500/10" />
+      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3 sm:gap-4">
+        <StatCard icon={RiBuilding2Line}   label="Blocks"            value={stats?.blocks}        color="text-blue-400"   bg="bg-blue-500/10" />
+        <StatCard icon={RiStackLine}       label="Floors"            value={stats?.floors}        color="text-indigo-400" bg="bg-indigo-500/10" />
         <StatCard icon={RiDoorOpenLine}    label="Classrooms"        value={stats?.classrooms}    color="text-purple-400" bg="bg-purple-500/10" />
         <StatCard icon={RiCpuLine}         label="Active Devices"    value={stats?.activeDevices} color="text-green-400"  bg="bg-green-500/10" />
         <StatCard icon={RiAlarmWarningLine}label="Alerts Today"      value={stats?.todayAlerts}   color="text-red-400"    bg="bg-red-500/10" />
@@ -201,49 +201,71 @@ export default function Dashboard() {
       </div>
 
       {/* Charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 sm:gap-6">
         <div className="lg:col-span-2 card">
-          <h3 className="text-white font-semibold mb-4">Bluetooth Alerts — Last 7 Days</h3>
-          <Line data={chartData} options={chartOptions} />
+          <h3 className="text-white font-semibold mb-4 text-sm sm:text-base">Bluetooth Alerts — Last 7 Days</h3>
+          <div className="h-48 sm:h-auto">
+            <Line data={chartData} options={chartOptions} />
+          </div>
         </div>
         <div className="card">
-          <h3 className="text-white font-semibold mb-4">Alert Heatmap</h3>
+          <h3 className="text-white font-semibold mb-4 text-sm sm:text-base">Alert Heatmap</h3>
           {(analytics?.classroomHeatmap?.length || 0) > 0
-            ? <Doughnut data={heatmapData} options={{ plugins: { legend: { position: 'bottom', labels: { color: '#94a3b8', boxWidth: 12, padding: 12 } } }, cutout: '65%' }} />
-            : <div className="flex items-center justify-center h-48 text-slate-500 text-sm">No alert data yet</div>
+            ? <div className="max-w-xs mx-auto"><Doughnut data={heatmapData} options={{ plugins: { legend: { position: 'bottom', labels: { color: '#94a3b8', boxWidth: 12, padding: 12 } } }, cutout: '65%' }} /></div>
+            : <div className="flex items-center justify-center h-40 text-slate-500 text-sm">No alert data yet</div>
           }
         </div>
       </div>
 
       {/* Recent Alerts */}
       <div className="card">
-        <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
+        <h3 className="text-white font-semibold mb-4 flex items-center gap-2 text-sm sm:text-base">
           <MdBluetooth className="text-primary-400" />Recent Detections
         </h3>
         {recentAlerts.length === 0
           ? <p className="text-slate-500 text-sm text-center py-8">No detections recorded</p>
           : (
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead><tr>
-                  <th className="th">Time</th><th className="th">Room</th>
-                  <th className="th">Block</th><th className="th">MAC Address</th>
-                  <th className="th">RSSI</th><th className="th">Status</th>
-                </tr></thead>
-                <tbody>
-                  {recentAlerts.map(log => (
-                    <tr key={log._id} className="table-row">
-                      <td className="td">{new Date(log.timestamp).toLocaleTimeString()}</td>
-                      <td className="td font-medium text-white">{log.classroomId?.roomName}</td>
-                      <td className="td">{log.classroomId?.blockId?.blockName}</td>
-                      <td className="td font-mono text-xs">{log.macAddress}</td>
-                      <td className="td"><span className="text-warning-400">{log.rssi} dBm</span></td>
-                      <td className="td"><span className="badge-red">Alert</span></td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <>
+              {/* Mobile cards */}
+              <div className="sm:hidden space-y-2">
+                {recentAlerts.map(log => (
+                  <div key={log._id} className="bg-white/5 rounded-xl p-3 border border-white/5">
+                    <div className="flex items-center justify-between mb-2">
+                      <span className="font-medium text-white text-sm">{log.classroomId?.roomName}</span>
+                      <span className="badge-red text-xs">Alert</span>
+                    </div>
+                    <p className="font-mono text-xs text-primary-400 mb-1">{log.macAddress}</p>
+                    <div className="flex items-center justify-between text-xs text-slate-500">
+                      <span>{log.classroomId?.blockId?.blockName}</span>
+                      <span className="text-warning-400">{log.rssi} dBm</span>
+                      <span>{new Date(log.timestamp).toLocaleTimeString()}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+              {/* Desktop table */}
+              <div className="hidden sm:block overflow-x-auto">
+                <table className="w-full">
+                  <thead><tr>
+                    <th className="th">Time</th><th className="th">Room</th>
+                    <th className="th">Block</th><th className="th">MAC Address</th>
+                    <th className="th">RSSI</th><th className="th">Status</th>
+                  </tr></thead>
+                  <tbody>
+                    {recentAlerts.map(log => (
+                      <tr key={log._id} className="table-row">
+                        <td className="td">{new Date(log.timestamp).toLocaleTimeString()}</td>
+                        <td className="td font-medium text-white">{log.classroomId?.roomName}</td>
+                        <td className="td">{log.classroomId?.blockId?.blockName}</td>
+                        <td className="td font-mono text-xs">{log.macAddress}</td>
+                        <td className="td"><span className="text-warning-400">{log.rssi} dBm</span></td>
+                        <td className="td"><span className="badge-red">Alert</span></td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )
         }
       </div>

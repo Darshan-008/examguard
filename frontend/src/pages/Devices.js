@@ -110,13 +110,13 @@ export default function Devices() {
   };
 
   return (
-    <div className="space-y-6 animate-fade-in">
-      <div className="flex items-center justify-between">
+    <div className="space-y-4 sm:space-y-6 animate-fade-in">
+      <div className="flex items-start sm:items-center justify-between gap-3">
         <div>
-          <h2 className="text-2xl font-bold text-white">ESP32 Devices</h2>
-          <p className="text-slate-400 text-sm mt-1">{devices.length} device(s) — {devices.filter(d => d.status === 'online').length} online</p>
+          <h2 className="text-xl sm:text-2xl font-bold text-white">ESP32 Devices</h2>
+          <p className="text-slate-400 text-xs sm:text-sm mt-1">{devices.length} device(s) — {devices.filter(d => d.status === 'online').length} online</p>
         </div>
-        <button onClick={openAdd} className="btn-primary"><RiAddLine />Register Device</button>
+        <button onClick={openAdd} className="btn-primary flex-shrink-0"><RiAddLine /><span className="hidden sm:inline">Register Device</span><span className="sm:hidden">Add</span></button>
       </div>
 
       <div className="card overflow-hidden p-0">
@@ -127,82 +127,131 @@ export default function Devices() {
             <p className="text-slate-400">No ESP32 devices registered yet.</p>
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="border-b border-white/10">
-                <tr>
-                  <th className="th">Device ID</th><th className="th">IP Address</th>
-                  <th className="th">Classroom</th><th className="th">Status</th>
-                  <th className="th">Monitoring</th><th className="th">Jammer</th>
-                  <th className="th">Sensitivity</th>
-                  <th className="th">Last Seen</th>
-                  <th className="th text-right">Actions</th>
-                </tr>
-              </thead>
-              <tbody>
-                {devices.map(d => (
-                  <tr key={d._id} className="table-row">
-                    <td className="td">
-                      <div className="flex items-center gap-2">
-                        <MdOutlineRouter className="text-primary-400 flex-shrink-0" />
-                        <span className="font-mono text-white text-sm">{d.deviceId}</span>
-                      </div>
-                    </td>
-                    <td className="td font-mono text-xs text-slate-400">{d.ipAddress || '—'}</td>
-                    <td className="td">{d.classroomId?.roomName
-                      ? <span className="badge-gray">{d.classroomId.roomName}</span>
-                      : <span className="text-slate-600">Unassigned</span>}
-                    </td>
-                    <td className="td">
-                      {d.status === 'online'
-                        ? <span className="badge-green"><RiWifiLine size={10}/>Online</span>
-                        : <span className="badge-gray"><RiWifiOffLine size={10}/>Offline</span>}
-                    </td>
-                    <td className="td">
-                      <button
-                        onClick={() => handleMonitoring(d)}
-                        disabled={togglingId === d._id || d.status === 'offline'}
-                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-300
-                          ${d.monitoringStatus === 'active' ? 'bg-primary-500' : 'bg-slate-700'}
-                          ${d.status === 'offline' ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
-                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform duration-300
-                          ${d.monitoringStatus === 'active' ? 'translate-x-6' : 'translate-x-1'}`} />
+          <>
+            {/* Mobile cards */}
+            <div className="lg:hidden divide-y divide-white/5">
+              {devices.map(d => (
+                <div key={d._id} className="p-4 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <MdOutlineRouter className="text-primary-400" />
+                      <span className="font-mono text-white text-sm font-semibold">{d.deviceId}</span>
+                    </div>
+                    <div className="flex gap-1">
+                      <button onClick={() => openEdit(d)} className="p-2 rounded-lg hover:bg-primary-500/10 text-primary-400 transition-colors"><RiEditLine size={16}/></button>
+                      <button onClick={() => handleDelete(d._id)} className="p-2 rounded-lg hover:bg-danger-500/10 text-danger-400 transition-colors"><RiDeleteBin6Line size={16}/></button>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div><span className="text-slate-500">IP: </span><span className="text-slate-300 font-mono">{d.ipAddress || '—'}</span></div>
+                    <div><span className="text-slate-500">Room: </span><span className="text-slate-300">{d.classroomId?.roomName || 'Unassigned'}</span></div>
+                    <div><span className="text-slate-500">Status: </span>
+                      {d.status === 'online' ? <span className="badge-green"><RiWifiLine size={10}/>Online</span> : <span className="badge-gray"><RiWifiOffLine size={10}/>Offline</span>}
+                    </div>
+                    <div><span className="text-slate-500">Sensitivity: </span><span className="font-mono text-info-400">{d.rssiThreshold || -85} dBm</span></div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-slate-500">Monitor:</span>
+                      <button onClick={() => handleMonitoring(d)} disabled={togglingId === d._id || d.status === 'offline'}
+                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                          d.monitoringStatus === 'active' ? 'bg-primary-500' : 'bg-slate-700'} ${
+                          d.status === 'offline' ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
+                        <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${
+                          d.monitoringStatus === 'active' ? 'translate-x-5' : 'translate-x-1'}`} />
                       </button>
-                      <span className={`ml-2 text-xs ${d.monitoringStatus === 'active' ? 'text-primary-400' : 'text-slate-500'}`}>
-                        {d.monitoringStatus === 'active' ? 'ON' : 'OFF'}
-                      </span>
-                    </td>
-                    <td className="td">
-                      <button
-                        onClick={() => handleJammer(d)}
-                        disabled={togglingId === d._id || d.status === 'offline' || d.monitoringStatus === 'inactive'}
-                        className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-300
-                          ${d.jammerStatus === 'active' ? 'bg-warning-500' : 'bg-slate-700'}
-                          ${d.status === 'offline' || d.monitoringStatus === 'inactive' ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
-                        <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform duration-300
-                          ${d.jammerStatus === 'active' ? 'translate-x-6' : 'translate-x-1'}`} />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-slate-500">Jammer:</span>
+                      <button onClick={() => handleJammer(d)} disabled={togglingId === d._id || d.status === 'offline' || d.monitoringStatus === 'inactive'}
+                        className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
+                          d.jammerStatus === 'active' ? 'bg-warning-500' : 'bg-slate-700'} ${
+                          d.status === 'offline' || d.monitoringStatus === 'inactive' ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
+                        <span className={`inline-block h-3 w-3 transform rounded-full bg-white shadow transition-transform ${
+                          d.jammerStatus === 'active' ? 'translate-x-5' : 'translate-x-1'}`} />
                       </button>
-                      <span className={`ml-2 text-xs ${d.jammerStatus === 'active' ? 'text-warning-400' : 'text-slate-500'}`}>
-                        {d.jammerStatus === 'active' ? 'ON' : 'OFF'}
-                      </span>
-                    </td>
-                    <td className="td">
-                      <span className="font-mono text-xs text-info-400">{d.rssiThreshold || -85} dBm</span>
-                    </td>
-                    <td className="td text-xs text-slate-400">
-                      {d.lastSeen ? new Date(d.lastSeen).toLocaleString() : '—'}
-                    </td>
-                    <td className="td text-right">
-                      <div className="flex gap-2 justify-end">
-                        <button onClick={() => openEdit(d)} className="p-2 rounded-lg hover:bg-primary-500/10 text-primary-400 transition-colors"><RiEditLine /></button>
-                        <button onClick={() => handleDelete(d._id)} className="p-2 rounded-lg hover:bg-danger-500/10 text-danger-400 transition-colors"><RiDeleteBin6Line /></button>
-                      </div>
-                    </td>
+                    </div>
+                  </div>
+                  {d.lastSeen && <p className="text-xs text-slate-600">Last seen: {new Date(d.lastSeen).toLocaleString()}</p>}
+                </div>
+              ))}
+            </div>
+            {/* Desktop table */}
+            <div className="hidden lg:block overflow-x-auto">
+              <table className="w-full">
+                <thead className="border-b border-white/10">
+                  <tr>
+                    <th className="th">Device ID</th><th className="th">IP Address</th>
+                    <th className="th">Classroom</th><th className="th">Status</th>
+                    <th className="th">Monitoring</th><th className="th">Jammer</th>
+                    <th className="th">Sensitivity</th>
+                    <th className="th">Last Seen</th>
+                    <th className="th text-right">Actions</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody>
+                  {devices.map(d => (
+                    <tr key={d._id} className="table-row">
+                      <td className="td">
+                        <div className="flex items-center gap-2">
+                          <MdOutlineRouter className="text-primary-400 flex-shrink-0" />
+                          <span className="font-mono text-white text-sm">{d.deviceId}</span>
+                        </div>
+                      </td>
+                      <td className="td font-mono text-xs text-slate-400">{d.ipAddress || '—'}</td>
+                      <td className="td">{d.classroomId?.roomName
+                        ? <span className="badge-gray">{d.classroomId.roomName}</span>
+                        : <span className="text-slate-600">Unassigned</span>}
+                      </td>
+                      <td className="td">
+                        {d.status === 'online'
+                          ? <span className="badge-green"><RiWifiLine size={10}/>Online</span>
+                          : <span className="badge-gray"><RiWifiOffLine size={10}/>Offline</span>}
+                      </td>
+                      <td className="td">
+                        <button
+                          onClick={() => handleMonitoring(d)}
+                          disabled={togglingId === d._id || d.status === 'offline'}
+                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-300
+                            ${d.monitoringStatus === 'active' ? 'bg-primary-500' : 'bg-slate-700'}
+                            ${d.status === 'offline' ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
+                          <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform duration-300
+                            ${d.monitoringStatus === 'active' ? 'translate-x-6' : 'translate-x-1'}`} />
+                        </button>
+                        <span className={`ml-2 text-xs ${d.monitoringStatus === 'active' ? 'text-primary-400' : 'text-slate-500'}`}>
+                          {d.monitoringStatus === 'active' ? 'ON' : 'OFF'}
+                        </span>
+                      </td>
+                      <td className="td">
+                        <button
+                          onClick={() => handleJammer(d)}
+                          disabled={togglingId === d._id || d.status === 'offline' || d.monitoringStatus === 'inactive'}
+                          className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors duration-300
+                            ${d.jammerStatus === 'active' ? 'bg-warning-500' : 'bg-slate-700'}
+                            ${d.status === 'offline' || d.monitoringStatus === 'inactive' ? 'opacity-40 cursor-not-allowed' : 'cursor-pointer'}`}>
+                          <span className={`inline-block h-4 w-4 transform rounded-full bg-white shadow transition-transform duration-300
+                            ${d.jammerStatus === 'active' ? 'translate-x-6' : 'translate-x-1'}`} />
+                        </button>
+                        <span className={`ml-2 text-xs ${d.jammerStatus === 'active' ? 'text-warning-400' : 'text-slate-500'}`}>
+                          {d.jammerStatus === 'active' ? 'ON' : 'OFF'}
+                        </span>
+                      </td>
+                      <td className="td">
+                        <span className="font-mono text-xs text-info-400">{d.rssiThreshold || -85} dBm</span>
+                      </td>
+                      <td className="td text-xs text-slate-400">
+                        {d.lastSeen ? new Date(d.lastSeen).toLocaleString() : '—'}
+                      </td>
+                      <td className="td text-right">
+                        <div className="flex gap-2 justify-end">
+                          <button onClick={() => openEdit(d)} className="p-2 rounded-lg hover:bg-primary-500/10 text-primary-400 transition-colors"><RiEditLine /></button>
+                          <button onClick={() => handleDelete(d._id)} className="p-2 rounded-lg hover:bg-danger-500/10 text-danger-400 transition-colors"><RiDeleteBin6Line /></button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </>
         )}
       </div>
 
