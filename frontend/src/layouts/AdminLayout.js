@@ -2,9 +2,9 @@ import React, { useState } from 'react';
 import { Outlet, NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import {
-  RiDashboardLine, RiBuilding2Line, RiStackLine, RiDoorOpenLine,
+  RiDashboardLine,
   RiCpuLine, RiAlarmWarningLine, RiUserLine, RiFileChartLine,
-  RiSettings3Line, RiLogoutBoxLine, RiMenuFoldLine, RiMenuUnfoldLine,
+  RiLogoutBoxLine, RiMenuFoldLine, RiMenuUnfoldLine,
   RiWifiLine, RiShieldCheckLine, RiEyeLine, RiMapPin2Line
 } from 'react-icons/ri';
 import { MdBluetooth } from 'react-icons/md';

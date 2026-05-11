@@ -3,7 +3,7 @@ import { detectionAPI } from '../services/api';
 import { Bar } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend } from 'chart.js';
 import toast from 'react-hot-toast';
-import { RiFileChartLine, RiDownloadLine } from 'react-icons/ri';
+import { RiFileChartLine } from 'react-icons/ri';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, Title, Tooltip, Legend);
 
