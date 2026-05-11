@@ -11,6 +11,7 @@ import Users from './pages/Users';
 import MonitoringDashboard from './pages/MonitoringDashboard';
 import Reports from './pages/Reports';
 
+
 const ProtectedRoute = ({ children, adminOnly = false }) => {
   const { user, loading } = useAuth();
   if (loading) return (
@@ -39,6 +40,7 @@ export default function App() {
           <Route path="users"          element={<ProtectedRoute adminOnly><Users /></ProtectedRoute>} />
           <Route path="monitoring"     element={<ProtectedRoute><MonitoringDashboard /></ProtectedRoute>} />
           <Route path="reports"        element={<ProtectedRoute><Reports /></ProtectedRoute>} />
+
         </Route>
 
         <Route path="*" element={<Navigate to="/" replace />} />

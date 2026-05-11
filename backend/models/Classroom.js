@@ -8,6 +8,7 @@ const classroomSchema = new mongoose.Schema({
   alertStatus: { type: Boolean, default: false },
   lastDetectionTime: { type: Date, default: null },
   totalDetections: { type: Number, default: 0 },
+  lastClearedAt: { type: Date, default: Date.now },
 }, { timestamps: true });
 
 module.exports = mongoose.model('Classroom', classroomSchema);

@@ -106,28 +106,32 @@ exports.postDetection = async (req, res) => {
     const roomId = classroomId || device.classroomId;
     if (!roomId) return res.status(400).json({ success: false, message: 'No classroom assigned' });
 
-    // COOLDOWN: Don't log the same device in the same room within 2 minutes
-    const twoMinutesAgo = new Date(Date.now() - 2 * 60 * 1000);
+    const classroom = await Classroom.findById(roomId);
+    if (!classroom) return res.status(404).json({ success: false, message: 'Classroom not found' });
+
+    // SESSION-BASED COOLDOWN: Don't log/alert the same device in the same room until the alert is cleared
+    const sessionStartTime = classroom.lastClearedAt || new Date(0);
     const existingLog = await DetectionLog.findOne({
       classroomId: roomId,
       macAddress: macAddress,
-      timestamp: { $gte: twoMinutesAgo }
+      timestamp: { $gte: sessionStartTime }
     });
 
     if (existingLog) {
-      // Update the existing log's timestamp and RSSI instead of creating a new one to reduce spam
+      // Update the existing log's timestamp and RSSI to show it's still present, but don't create a new log or send a new alert
       existingLog.timestamp = new Date();
       existingLog.rssi = rssi;
       await existingLog.save();
-      return res.status(200).json({ success: true, message: 'Existing detection updated (cooldown active)', data: existingLog });
+      return res.status(200).json({ success: true, message: 'Device already detected in this session. Updating timestamp.', data: existingLog });
     }
 
     // Create log
     const brand = getManufacturer(macAddress);
+    const isRandomized = brand === 'Randomized MAC';
     let finalName = deviceName;
 
     if (deviceName === 'Unknown' || deviceName === 'BLE Device' || !deviceName) {
-      if (brand === 'Randomized MAC') {
+      if (isRandomized) {
         finalName = 'Mobile Device (Private MAC)';
       } else if (brand === 'Generic') {
         finalName = 'Unknown Bluetooth Device';
@@ -145,6 +149,7 @@ exports.postDetection = async (req, res) => {
       deviceClass: deviceClass || 0,
       appearance: appearance || 0,
       category: getCategory(deviceClass, appearance, finalName),
+      isRandomized,
       alertStatus: 'alert',
     });
 
@@ -269,7 +274,16 @@ exports.getAnalytics = async (req, res) => {
 exports.clearLogs = async (req, res) => {
   try {
     await DetectionLog.deleteMany({});
-    res.json({ success: true, message: 'All detection logs have been cleared' });
+    
+    // Also reset all classroom counters and alert statuses
+    await Classroom.updateMany({}, {
+      alertStatus: false,
+      totalDetections: 0,
+      lastDetectionTime: null,
+      lastClearedAt: new Date()
+    });
+
+    res.json({ success: true, message: 'All detection logs and classroom counters have been cleared' });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }

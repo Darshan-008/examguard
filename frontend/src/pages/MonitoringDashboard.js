@@ -22,6 +22,15 @@ const alertSound = () => {
   } catch (e) {}
 };
 
+const voiceAlert = (roomName) => {
+  if (!('speechSynthesis' in window)) return;
+  window.speechSynthesis.cancel(); // Stop any current speaking
+  const utterance = new SpeechSynthesisUtterance(`Attention. Bluetooth device detected in ${roomName}`);
+  utterance.rate = 0.9;
+  utterance.pitch = 1;
+  window.speechSynthesis.speak(utterance);
+};
+
 const ClassroomCard = ({ room, onClearAlert, onViewLogs }) => {
   const device = room.esp32DeviceId;
   const isInactive = device?.monitoringStatus === 'inactive';
@@ -92,6 +101,20 @@ const ClassroomCard = ({ room, onClearAlert, onViewLogs }) => {
             {room.totalDetections}
           </span>
         </div>
+        {room.alertStatus && room.lastDetectionMac && (
+          <div className="mt-1 space-y-1">
+            <div className="flex justify-between items-center p-1 bg-danger-500/10 rounded border border-danger-500/20">
+              <span className="text-[10px] text-danger-400 font-bold">LATEST MAC</span>
+              <span className="text-white font-mono font-bold tracking-wider">{room.lastDetectionMac}</span>
+            </div>
+            {room.isRandomized && (
+              <div className="text-[9px] text-warning-400 font-bold uppercase flex items-center gap-1 px-1">
+                <span className="w-1.5 h-1.5 rounded-full bg-warning-500 animate-pulse" />
+                Rotating Private MAC
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Actions */}
@@ -137,6 +160,16 @@ export default function MonitoringDashboard() {
 
   const { on, off, emit } = useSocket();
   const audioEnabled = useRef(true);
+  const [voiceEnabled, setVoiceEnabled] = useState(() => {
+    return localStorage.getItem('voiceAlertsEnabled') !== 'false';
+  });
+
+  const toggleVoice = () => {
+    setVoiceEnabled(prev => {
+      localStorage.setItem('voiceAlertsEnabled', !prev);
+      return !prev;
+    });
+  };
 
   const fetchClassrooms = useCallback(async () => {
     setLoading(true);
@@ -166,13 +199,23 @@ export default function MonitoringDashboard() {
 
     const alertHandler = (data) => {
       if (audioEnabled.current) alertSound();
+      if (voiceEnabled) {
+        voiceAlert(data.log?.classroomId?.roomName || 'Classroom');
+      }
       toast.error(
         `🔵 BLUETOOTH ALERT!\nRoom: ${data.log?.classroomId?.roomName || 'Unknown'}\nMAC: ${data.macAddress?.toUpperCase()}`,
         { duration: 8000, id: `alert-${data.classroomId}` }
       );
       setClassrooms(prev => prev.map(r =>
         r._id === data.classroomId
-          ? { ...r, alertStatus: true, lastDetectionTime: data.timestamp, totalDetections: (r.totalDetections || 0) + 1 }
+          ? { 
+              ...r, 
+              alertStatus: true, 
+              lastDetectionTime: data.timestamp, 
+              lastDetectionMac: data.macAddress?.toUpperCase(),
+              isRandomized: data.log?.isRandomized,
+              totalDetections: (r.totalDetections || 0) + 1 
+            }
           : r
       ));
       
@@ -186,7 +229,7 @@ export default function MonitoringDashboard() {
     };
 
     const clearHandler = ({ classroomId }) => {
-      setClassrooms(prev => prev.map(r => r._id === classroomId ? { ...r, alertStatus: false } : r));
+      setClassrooms(prev => prev.map(r => r._id === classroomId ? { ...r, alertStatus: false, totalDetections: 0 } : r));
     };
 
     const deviceHandler = ({ deviceId, status }) => {
@@ -215,7 +258,7 @@ export default function MonitoringDashboard() {
       off('deviceStatus', deviceHandler);
       off('deviceUpdate', deviceUpdateHandler);
     };
-  }, [fetchClassrooms, on, off]);
+  }, [fetchClassrooms, on, off, voiceEnabled]);
 
   const handleClearAlert = (classroomId) => {
     emit('clearAlert', { classroomId });
@@ -239,11 +282,22 @@ export default function MonitoringDashboard() {
           <h2 className="text-2xl font-bold text-white">Live Monitoring Dashboard</h2>
           <p className="text-slate-400 text-sm mt-1">Real-time classroom Bluetooth surveillance</p>
         </div>
-        <button onClick={fetchClassrooms} disabled={loading}
-          className="btn-ghost text-sm disabled:opacity-50">
-          <RiRefreshLine className={loading ? 'animate-spin' : ''} />
-          {loading ? 'Refreshing...' : 'Refresh'}
-        </button>
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/5 border border-white/10">
+            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Voice Alerts</span>
+            <button 
+              onClick={toggleVoice}
+              className={`relative inline-flex h-5 w-10 items-center rounded-full transition-colors focus:outline-none ${voiceEnabled ? 'bg-primary-600' : 'bg-slate-700'}`}
+            >
+              <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${voiceEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+            </button>
+          </div>
+          <button onClick={fetchClassrooms} disabled={loading}
+            className="btn-ghost text-sm disabled:opacity-50">
+            <RiRefreshLine className={loading ? 'animate-spin' : ''} />
+            {loading ? 'Refreshing...' : 'Refresh'}
+          </button>
+        </div>
       </div>
 
       {/* Summary */}
@@ -341,7 +395,14 @@ export default function MonitoringDashboard() {
                       </div>
                       <div className="flex-1">
                         <div className="flex items-center justify-between mb-1">
-                          <p className="font-mono text-sm text-white font-semibold">{log.macAddress?.toUpperCase()}</p>
+                          <div className="flex flex-col gap-0.5">
+                            <p className="font-mono text-sm text-white font-semibold">{log.macAddress?.toUpperCase()}</p>
+                            {log.isRandomized && (
+                              <span className="text-[8px] px-1 rounded bg-warning-500/10 text-warning-400 border border-warning-500/20 w-fit font-bold uppercase">
+                                Private MAC
+                              </span>
+                            )}
+                          </div>
                           <p className="text-[10px] text-slate-500">{new Date(log.timestamp).toLocaleString()}</p>
                         </div>
                         <div className="flex items-center gap-3">

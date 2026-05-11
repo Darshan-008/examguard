@@ -30,10 +30,18 @@ module.exports = (io) => {
     });
 
     // Admin manually clears alert for a classroom
-    socket.on('clearAlert', ({ classroomId }) => {
+    socket.on('clearAlert', async ({ classroomId }) => {
       const Classroom = require('../models/Classroom');
-      Classroom.findByIdAndUpdate(classroomId, { alertStatus: false }).exec();
-      io.emit('alertCleared', { classroomId });
+      try {
+        await Classroom.findByIdAndUpdate(classroomId, { 
+          alertStatus: false,
+          totalDetections: 0, // Reset detection count when admin clears
+          lastClearedAt: new Date()
+        });
+        io.emit('alertCleared', { classroomId });
+      } catch (err) {
+        console.error('[Socket] clearAlert error:', err.message);
+      }
     });
 
     socket.on('disconnect', async () => {

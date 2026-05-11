@@ -9,6 +9,7 @@ const detectionLogSchema = new mongoose.Schema({
   deviceClass: { type: Number, default: 0 },
   appearance: { type: Number, default: 0 },
   category: { type: String, default: 'Unknown' },
+  isRandomized: { type: Boolean, default: false },
   alertStatus: { type: String, enum: ['alert', 'cleared'], default: 'alert' },
   timestamp: { type: Date, default: Date.now },
 }, { timestamps: true });

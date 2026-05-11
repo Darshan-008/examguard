@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useCallback } from 'react';
-import { dashboardAPI, detectionAPI } from '../services/api';
+import { dashboardAPI, detectionAPI, classroomAPI } from '../services/api';
 import { Line, Doughnut } from 'react-chartjs-2';
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, ArcElement, Filler } from 'chart.js';
 import useSocket from '../hooks/useSocket';
@@ -8,6 +8,28 @@ import { RiBuilding2Line, RiStackLine, RiDoorOpenLine, RiCpuLine, RiAlarmWarning
 import { MdBluetooth } from 'react-icons/md';
 
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Title, Tooltip, Legend, ArcElement, Filler);
+
+const alertSound = () => {
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const o = ctx.createOscillator(); const g = ctx.createGain();
+    o.connect(g); g.connect(ctx.destination);
+    o.frequency.setValueAtTime(880, ctx.currentTime);
+    o.frequency.setValueAtTime(440, ctx.currentTime + 0.1);
+    g.gain.setValueAtTime(0.3, ctx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.5);
+    o.start(ctx.currentTime); o.stop(ctx.currentTime + 0.5);
+  } catch (e) {}
+};
+
+const voiceAlert = (roomName) => {
+  if (!('speechSynthesis' in window)) return;
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(`Attention. Bluetooth device detected in ${roomName}`);
+  utterance.rate = 0.9;
+  utterance.pitch = 1;
+  window.speechSynthesis.speak(utterance);
+};
 
 const StatCard = ({ icon: Icon, label, value, color, bg }) => (
   <div className="stat-card">
@@ -23,18 +45,31 @@ export default function Dashboard() {
   const [stats, setStats] = useState(null);
   const [analytics, setAnalytics] = useState(null);
   const [recentAlerts, setRecentAlerts] = useState([]);
-  const { on, off } = useSocket();
+  const [classrooms, setClassrooms] = useState([]);
+  const { on, off, emit } = useSocket();
+  const [voiceEnabled, setVoiceEnabled] = useState(() => {
+    return localStorage.getItem('voiceAlertsEnabled') !== 'false';
+  });
+
+  const toggleVoice = () => {
+    setVoiceEnabled(prev => {
+      localStorage.setItem('voiceAlertsEnabled', !prev);
+      return !prev;
+    });
+  };
 
   const fetchData = useCallback(async () => {
     try {
-      const [s, a, logs] = await Promise.all([
+      const [s, a, logs, rooms] = await Promise.all([
         dashboardAPI.getStats(),
         detectionAPI.getAnalytics(7),
         detectionAPI.getLogs({ limit: 5 }),
+        classroomAPI.getAll(),
       ]);
       setStats(s.data.data);
       setAnalytics(a.data);
       setRecentAlerts(logs.data.data || []);
+      setClassrooms(rooms.data.data || []);
     } catch (err) {
       console.error('Dashboard fetch error:', err);
     }
@@ -43,12 +78,39 @@ export default function Dashboard() {
   useEffect(() => {
     fetchData();
     const handler = (data) => {
-      toast.error(`🔵 Bluetooth Alert! Room: ${data.log?.classroomId?.roomName || 'Unknown'} | MAC: ${data.macAddress}`, { duration: 6000 });
+      alertSound();
+      if (voiceEnabled) {
+        voiceAlert(data.log?.classroomId?.roomName || 'Classroom');
+      }
+      toast.error(
+        `🔵 BLUETOOTH ALERT!\nRoom: ${data.log?.classroomId?.roomName || 'Unknown'}\nMAC: ${data.macAddress?.toUpperCase()}`,
+        { duration: 8000, id: `alert-${data.classroomId}` }
+      );
+      
+      setClassrooms(prev => prev.map(r => 
+        r._id === data.classroomId ? { ...r, alertStatus: true, lastDetectionMac: data.macAddress } : r
+      ));
       fetchData();
     };
+
+    const clearHandler = ({ classroomId }) => {
+      setClassrooms(prev => prev.map(r => r._id === classroomId ? { ...r, alertStatus: false } : r));
+      fetchData();
+    };
+
     on('bluetoothAlert', handler);
-    return () => off('bluetoothAlert', handler);
-  }, [fetchData, on, off]);
+    on('alertCleared', clearHandler);
+    return () => {
+      off('bluetoothAlert', handler);
+      off('alertCleared', clearHandler);
+    };
+  }, [fetchData, on, off, voiceEnabled]);
+
+  const handleClearAlert = (classroomId) => {
+    emit('clearAlert', { classroomId });
+  };
+
+  const activeAlerts = classrooms.filter(r => r.alertStatus);
 
   const chartLabels = analytics?.data?.map(d => d._id) || [];
   const chartData = {
@@ -85,10 +147,48 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6 animate-fade-in">
-      <div>
-        <h2 className="text-2xl font-bold text-white">Admin Dashboard</h2>
-        <p className="text-slate-400 text-sm mt-1">Real-time Bluetooth detection overview</p>
+      <div className="flex items-center justify-between flex-wrap gap-4">
+        <div>
+          <h2 className="text-2xl font-bold text-white">Admin Dashboard</h2>
+          <p className="text-slate-400 text-sm mt-1">Real-time Bluetooth detection overview</p>
+        </div>
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl bg-white/5 border border-white/10">
+          <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Voice Alerts</span>
+          <button 
+            onClick={toggleVoice}
+            className={`relative inline-flex h-5 w-10 items-center rounded-full transition-colors focus:outline-none ${voiceEnabled ? 'bg-primary-600' : 'bg-slate-700'}`}
+          >
+            <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${voiceEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
+          </button>
+        </div>
       </div>
+
+      {/* Active Alerts Banner */}
+      {activeAlerts.length > 0 && (
+        <div className="space-y-3">
+          {activeAlerts.map(room => (
+            <div key={room._id} className="flex items-center justify-between p-4 rounded-2xl bg-danger-500/10 border border-danger-500/30 animate-pulse-slow">
+              <div className="flex items-center gap-4">
+                <div className="w-10 h-10 rounded-full bg-danger-500/20 flex items-center justify-center text-danger-500">
+                  <RiAlarmWarningLine size={24} className="animate-bounce" />
+                </div>
+                <div>
+                  <h4 className="text-white font-bold">Active Detection: {room.roomName}</h4>
+                  <p className="text-danger-400 text-xs font-mono uppercase tracking-wider">
+                    Target MAC: {room.lastDetectionMac || 'Unknown'}
+                  </p>
+                </div>
+              </div>
+              <button 
+                onClick={() => handleClearAlert(room._id)}
+                className="px-4 py-2 bg-danger-600 hover:bg-danger-500 text-white text-xs font-bold rounded-xl transition-all shadow-lg shadow-danger-600/20"
+              >
+                Dismiss Alert
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* Stats */}
       <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">

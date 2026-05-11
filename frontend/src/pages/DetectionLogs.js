@@ -163,9 +163,16 @@ export default function DetectionLogs() {
                     <td className="td font-medium text-white">{log.classroomId?.roomName || '—'}</td>
                     <td className="td font-mono text-xs text-slate-400">{log.esp32DeviceId?.deviceId || '—'}</td>
                     <td className="td">
-                      <div className="flex items-center gap-1.5">
-                        <MdBluetooth className="text-primary-400 flex-shrink-0" size={12}/>
-                        <span className="font-mono text-xs">{log.macAddress?.toUpperCase()}</span>
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center gap-1.5">
+                          <MdBluetooth className="text-primary-400 flex-shrink-0" size={12}/>
+                          <span className="font-mono text-xs">{log.macAddress?.toUpperCase()}</span>
+                        </div>
+                        {log.isRandomized && (
+                          <span className="text-[9px] px-1.5 py-0.5 rounded bg-warning-500/10 text-warning-400 border border-warning-500/20 w-fit font-bold uppercase tracking-tighter">
+                            Private MAC
+                          </span>
+                        )}
                       </div>
                     </td>
                     <td className="td text-xs text-slate-400">{log.deviceName || 'Unknown'}</td>
