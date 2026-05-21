@@ -31,6 +31,7 @@
 // ─── CONFIGURATION ────────────────────────────────────────────────────────────
 const char* WIFI_SSID       = "Iqoo";
 const char* WIFI_PASSWORD   = "123456789";
+ // Render URL
 const char* BACKEND_URL     = "https://examguard-backend-c4oe.onrender.com"; // Render URL
 const char* DEVICE_ID       = "ESP32-A101";                 // Must match DB deviceId
 const char* CLASSROOM_ID    = "";                           // MongoDB Classroom _id (optional)
