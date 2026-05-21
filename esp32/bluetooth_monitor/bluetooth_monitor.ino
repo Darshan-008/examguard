@@ -67,12 +67,16 @@ void connectWiFi() {
 
 // ─── SEND DETECTION TO BACKEND ────────────────────────────────────────────────
 void sendDetection(const char* macAddress, int rssi, const char* deviceName, uint32_t cod = 0, uint16_t appearance = 0) {
-  if (WiFi.status() != WL_CONNECTED) return;
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[API] WiFi disconnected, skipping detection");
+    return;
+  }
 
   HTTPClient http;
   String url = String(BACKEND_URL) + "/api/detection";
   http.begin(url);
   http.setInsecure(); // Required for HTTPS
+  http.setTimeout(10000); // 10 second timeout
   http.addHeader("Content-Type", "application/json");
 
   StaticJsonDocument<512> doc;
@@ -88,22 +92,28 @@ void sendDetection(const char* macAddress, int rssi, const char* deviceName, uin
   serializeJson(doc, body);
 
   int code = http.POST(body);
-  if (code == 201) {
+  String response = http.getString();
+  
+  if (code == 201 || code == 200) {
     Serial.printf("[API] Detection sent: %s (RSSI: %d)\n", macAddress, rssi);
   } else {
-    Serial.printf("[API] Send failed: HTTP %d\n", code);
+    Serial.printf("[API] POST %s failed: HTTP %d | Response: %s\n", url.c_str(), code, response.c_str());
   }
   http.end();
 }
 
 // ─── HEARTBEAT ────────────────────────────────────────────────────────────────
 void sendHeartbeat() {
-  if (WiFi.status() != WL_CONNECTED) return;
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[Heartbeat] WiFi disconnected, skipping");
+    return;
+  }
 
   HTTPClient http;
   String url = String(BACKEND_URL) + "/api/devices/heartbeat";
   http.begin(url);
   http.setInsecure(); // Required for HTTPS
+  http.setTimeout(10000); // 10 second timeout
   http.addHeader("Content-Type", "application/json");
 
   StaticJsonDocument<128> doc;
@@ -114,24 +124,59 @@ void sendHeartbeat() {
   serializeJson(doc, body);
 
   int code = http.POST(body);
+  
   if (code == 200) {
-    // Parse jammer command from response
     String res = http.getString();
-    StaticJsonDocument<128> resp;
-    deserializeJson(resp, res);
-    bool shouldJam = (String(resp["jammerStatus"].as<const char*>()) == "active");
-    if (shouldJam != jammerActive) {
-      jammerActive = shouldJam;
-      digitalWrite(JAMMER_PIN, jammerActive ? HIGH : LOW);
-    }
+    StaticJsonDocument<256> resp;
+    DeserializationError error = deserializeJson(resp, res);
     
-    bool shouldMonitor = (String(resp["monitoringStatus"].as<const char*>()) == "active");
-    if (shouldMonitor != monitoringActive) {
-      monitoringActive = shouldMonitor;
-      Serial.printf("[System] Monitoring: %s\n", monitoringActive ? "ENABLED" : "DISABLED");
-    }
+    if (error) {
+      Serial.printf("[Heartbeat] JSON parse error: %s | Raw: %s\n", error.c_str(), res.c_str());
+    } else {
+      bool shouldJam = (String(resp["jammerStatus"].as<const char*>()) == "active");
+      if (shouldJam != jammerActive) {
+        jammerActive = shouldJam;
+        digitalWrite(JAMMER_PIN, jammerActive ? HIGH : LOW);
+      }
+      
+      bool shouldMonitor = (String(resp["monitoringStatus"].as<const char*>()) == "active");
+      if (shouldMonitor != monitoringActive) {
+        monitoringActive = shouldMonitor;
+        Serial.printf("[System] Monitoring: %s\n", monitoringActive ? "ENABLED" : "DISABLED");
+      }
 
-    Serial.printf("[Jammer] %s\n", jammerActive ? "ON" : "OFF");
+      Serial.printf("[Heartbeat] OK | Jammer: %s | Monitoring: %s\n", 
+        jammerActive ? "ON" : "OFF", monitoringActive ? "ON" : "OFF");
+    }
+  } else {
+    String response = http.getString();
+    Serial.printf("[Heartbeat] POST %s failed: HTTP %d | Response: %s\n", url.c_str(), code, response.c_str());
+  }
+  http.end();
+}
+
+// ─── HEALTH CHECK (to debug connectivity) ──────────────────────────────────────
+void checkBackendHealth() {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("[Health] WiFi disconnected");
+    return;
+  }
+
+  Serial.printf("[Health] Checking: %s/api/health\n", BACKEND_URL);
+  
+  HTTPClient http;
+  String url = String(BACKEND_URL) + "/api/health";
+  http.begin(url);
+  http.setInsecure();
+  http.setTimeout(10000);
+
+  int code = http.GET();
+  String response = http.getString();
+
+  if (code == 200) {
+    Serial.printf("[Health] ✓ Backend is reachable: %s\n", response.c_str());
+  } else {
+    Serial.printf("[Health] ✗ Backend unreachable: HTTP %d | %s\n", code, response.c_str());
   }
   http.end();
 }
@@ -210,6 +255,8 @@ void startBluetoothScan() {
 void setup() {
   Serial.begin(115200);
   Serial.println("\n[System] Bluetooth Detection Monitor Starting...");
+  Serial.printf("[Config] Backend URL: %s\n", BACKEND_URL);
+  Serial.printf("[Config] Device ID: %s\n", DEVICE_ID);
 
   // Jammer relay pin
   pinMode(JAMMER_PIN, OUTPUT);
@@ -217,6 +264,10 @@ void setup() {
 
   // WiFi
   connectWiFi();
+  
+  // Test backend connectivity
+  delay(1000);
+  checkBackendHealth();
 
   // Initialize Bluetooth controller
   esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();

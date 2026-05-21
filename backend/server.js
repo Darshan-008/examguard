@@ -36,9 +36,18 @@ socketHandler(io);
 // Security middleware
 app.use(helmet({ contentSecurityPolicy: false }));
 
-// CORS
+// CORS - Allow frontend, ESP32, and other clients
 app.use(cors({
-  origin: frontendUrl,
+  origin: function(origin, callback) {
+    // Allow requests with no origin (mobile apps, curl, ESP32)
+    if (!origin) return callback(null, true);
+    // Allow frontend
+    if (origin === frontendUrl) return callback(null, true);
+    // Allow localhost for development
+    if (origin.includes('localhost')) return callback(null, true);
+    // Allow all for public API (ESP32 can connect from anywhere)
+    return callback(null, true);
+  },
   credentials: true,
 }));
 
