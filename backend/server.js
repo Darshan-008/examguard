@@ -70,6 +70,7 @@ app.use('/api/classrooms', require('./routes/classrooms'));
 app.use('/api/devices', require('./routes/devices'));
 app.use('/api/detection', require('./routes/detection'));
 app.use('/api/users', require('./routes/users'));
+app.use('/api/voice', require('./routes/voice'));
 
 // Dashboard stats route (admin)
 app.get('/api/dashboard/stats', require('./middleware/auth').protect, require('./middleware/auth').adminOnly, async (req, res) => {

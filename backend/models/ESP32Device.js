@@ -10,6 +10,7 @@ const esp32DeviceSchema = new mongoose.Schema({
   rssiThreshold: { type: Number, default: -85 }, // Devices with RSSI lower than this will be ignored
   lastSeen: { type: Date, default: null },
   firmwareVersion: { type: String, default: '1.0.0' },
+  pendingCommand: { type: mongoose.Schema.Types.Mixed, default: null },
 }, { timestamps: true });
 
 module.exports = mongoose.model('ESP32Device', esp32DeviceSchema);

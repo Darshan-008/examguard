@@ -145,6 +145,38 @@ void sendHeartbeat() {
         Serial.printf("[System] Monitoring: %s\n", monitoringActive ? "ENABLED" : "DISABLED");
       }
 
+      if (resp.containsKey("pendingCommand") && !resp["pendingCommand"].isNull()) {
+        JsonObject cmd = resp["pendingCommand"].as<JsonObject>();
+        const char* action = cmd["action"] | cmd["type"] | "";
+        const char* macAddress = cmd["macAddress"] | "";
+        String actionStr = String(action);
+
+        Serial.printf("[Heartbeat] Pending command: %s %s\n", action, macAddress);
+
+        if (actionStr == "locate") {
+          Serial.println("[Command] Locate command received");
+        } else if (actionStr == "start") {
+          monitoringActive = true;
+          Serial.println("[Command] Start monitoring");
+        } else if (actionStr == "stop") {
+          monitoringActive = false;
+          jammerActive = false;
+          digitalWrite(JAMMER_PIN, LOW);
+          Serial.println("[Command] Stop monitoring and jammer");
+        } else if (actionStr == "toggle_jammer") {
+          jammerActive = !jammerActive;
+          digitalWrite(JAMMER_PIN, jammerActive ? HIGH : LOW);
+          Serial.printf("[Command] Toggle jammer: %s\n", jammerActive ? "ON" : "OFF");
+        } else if (actionStr == "toggle_monitoring") {
+          monitoringActive = !monitoringActive;
+          if (!monitoringActive) {
+            jammerActive = false;
+            digitalWrite(JAMMER_PIN, LOW);
+          }
+          Serial.printf("[Command] Toggle monitoring: %s\n", monitoringActive ? "ON" : "OFF");
+        }
+      }
+
       Serial.printf("[Heartbeat] OK | Jammer: %s | Monitoring: %s\n", 
         jammerActive ? "ON" : "OFF", monitoringActive ? "ON" : "OFF");
     }

@@ -93,20 +93,24 @@ exports.toggleMonitoring = async (req, res) => {
 exports.heartbeat = async (req, res) => {
   try {
     const { deviceId, ipAddress } = req.body;
-    const device = await ESP32Device.findOneAndUpdate(
-      { deviceId },
-      { status: 'online', lastSeen: new Date(), ipAddress: ipAddress || undefined },
-      { returnDocument: 'after' }
-    );
+    const device = await ESP32Device.findOne({ deviceId });
     if (!device) return res.status(404).json({ success: false, message: 'Device not found' });
+
+    const pendingCommand = device.pendingCommand || null;
+    device.status = 'online';
+    device.lastSeen = new Date();
+    if (ipAddress) device.ipAddress = ipAddress;
+    device.pendingCommand = null;
+    await device.save();
 
     const io = req.app.get('io');
     if (io) io.emit('deviceStatus', { deviceId: device._id, status: 'online' });
 
     res.json({ 
-      success: true, 
+      success: true,
       jammerStatus: device.jammerStatus,
-      monitoringStatus: device.monitoringStatus 
+      monitoringStatus: device.monitoringStatus,
+      pendingCommand,
     });
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });

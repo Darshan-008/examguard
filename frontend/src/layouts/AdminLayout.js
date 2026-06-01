@@ -9,6 +9,7 @@ import {
   RiCloseLine, RiMenuLine
 } from 'react-icons/ri';
 import { MdBluetooth } from 'react-icons/md';
+import VoiceControl from '../components/VoiceControl';
 
 const adminLinks = [
   { to: '/dashboard',      icon: RiDashboardLine,   label: 'Dashboard' },
@@ -185,6 +186,7 @@ export default function AdminLayout() {
               <RiShieldCheckLine size={12}/>
               <span className="hidden sm:inline">{user?.role}</span>
             </div>
+            <VoiceControl />
           </div>
         </header>
 
