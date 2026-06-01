@@ -1,5 +1,6 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { blockAPI, floorAPI, classroomAPI, detectionAPI } from '../services/api';
+import useSocket from '../hooks/useSocket';
 import toast from 'react-hot-toast';
 import { 
   RiBuilding2Line, RiStackLine, RiDoorOpenLine, 
@@ -40,6 +41,8 @@ export default function Infrastructure() {
   const [selected, setSelected] = useState(null);
   const [form, setForm] = useState({});
 
+  const { on, off } = useSocket();
+
   const fetchInfrastructure = useCallback(async () => {
     setLoading(true);
     try {
@@ -68,6 +71,26 @@ export default function Infrastructure() {
   useEffect(() => {
     fetchInfrastructure();
   }, [fetchInfrastructure]);
+
+  // ── Real-time infrastructure updates (voice commands / other admin actions) ──
+  useEffect(() => {
+    const handleInfraUpdate = ({ type, action, data: item }) => {
+      const typeLabel = type === 'block' ? 'Block' : type === 'floor' ? 'Floor' : 'Classroom';
+      const itemName = item?.blockName || item?.floorName || item?.roomName || '';
+      if (action === 'create') {
+        toast.success(`🎙️ ${typeLabel} "${itemName}" added via voice!`, { duration: 3000 });
+      } else if (action === 'update') {
+        toast(`${typeLabel} "${itemName}" updated`, { icon: '✏️' });
+      } else if (action === 'delete') {
+        toast(`${typeLabel} deleted`, { icon: '🗑️' });
+      }
+      // Re-fetch to get fresh nested structure
+      fetchInfrastructure();
+    };
+
+    on('infrastructureUpdate', handleInfraUpdate);
+    return () => off('infrastructureUpdate', handleInfraUpdate);
+  }, [on, off, fetchInfrastructure]);
 
   const toggle = (id) => {
     setExpanded(prev => ({ ...prev, [id]: !prev[id] }));

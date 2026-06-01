@@ -1,24 +1,35 @@
 const VoiceCommand = require('../models/VoiceCommand');
 const ESP32Device = require('../models/ESP32Device');
 const DetectionLog = require('../models/DetectionLog');
+const Block = require('../models/Block');
+const Floor = require('../models/Floor');
+const Classroom = require('../models/Classroom');
 
 const macRegex = /([0-9A-Fa-f]{2}(?::|-)?){5}[0-9A-Fa-f]{2}/;
-const esp32Regex = /\b(ESP32[-_ ]?[A-Z0-9]+)\b/i;
+const esp32Regex = /\b(ESP[-_ ]?32[-_ ]?[A-Z0-9]+)\b/i;
 const deviceNameRegex = /\bdevice\s+([A-Z0-9-]+)\b/i;
 
 function normalizeDeviceId(value) {
   if (!value) return null;
-  const normalized = value.toUpperCase().replace(/[_ ]+/g, '-');
+  // Remove spaces/underscores and make uppercase
+  const normalized = value.toUpperCase().replace(/[\s_]+/g, '-').replace(/^ESP-32/, 'ESP32');
   return normalized.startsWith('ESP32') ? normalized : `ESP32-${normalized}`;
 }
 
+// ─── INTENT PARSER ─────────────────────────────────────────────────────────
 function parseIntent(text) {
   const original = text.trim();
   const lower = original.toLowerCase();
+
+  // Extract device identifiers
   const deviceMatch = esp32Regex.exec(original) || deviceNameRegex.exec(original);
   const deviceId = normalizeDeviceId(deviceMatch ? deviceMatch[1] : null);
   const macMatch = macRegex.exec(original);
-  const targetAll = /\ball\b/.test(lower) || /all devices/.test(lower) || /every device/.test(lower);
+  const targetAll =
+    /\ball\b/.test(lower) ||
+    /all devices/.test(lower) ||
+    /every device/.test(lower) ||
+    /all esp/.test(lower);
 
   const parsed = {
     intent: 'unknown',
@@ -28,47 +39,213 @@ function parseIntent(text) {
     macAddress: macMatch ? macMatch[0].replace(/-/g, ':').toUpperCase() : null,
     target: targetAll ? 'all' : null,
     raw: original,
+    // Infrastructure fields
+    blockName: null,
+    floorName: null,
+    roomName: null,
+    parentBlockName: null,
+    parentFloorName: null,
   };
 
+  // ── WAKE WORD ────────────────────────────────────────────────────────────
   if (/\b(hey\s+examguard|examguard)\b/.test(lower)) {
     parsed.intent = 'wake';
   }
 
-  if (/(?:navigate to|go to|open|show|view)\b.*\b(dashboard|infrastructure|devices|esp32|logs|alerts|detection|monitoring|reports|users)\b/.test(lower)
-      || (/\b(dashboard|infrastructure|devices|esp32|logs|alerts|detection|monitoring|reports|users)\b/.test(lower) && !/(?:stop|disable|turn off|power off|hide|close)\b/.test(lower))) {
-    parsed.intent = 'navigate';
-    if (/dashboard/.test(lower)) parsed.route = '/dashboard';
-    else if (/infrastructure/.test(lower)) parsed.route = '/infrastructure';
-    else if (/(?:devices|esp32)\b/.test(lower)) parsed.route = '/devices';
-    else if (/(?:monitoring|monitor)\b/.test(lower)) parsed.route = '/monitoring';
-    else if (/(?:logs|alerts|detection)\b/.test(lower)) parsed.route = '/logs';
-    else if (/users\b/.test(lower)) parsed.route = '/users';
-    else if (/reports\b/.test(lower) || /analytics|statistics/.test(lower)) parsed.route = '/reports';
-    parsed.action = parsed.route ? 'navigate' : 'unknown';
+  // ── LOGOUT ──────────────────────────────────────────────────────────────
+  if (/\b(log\s*out|sign\s*out|sign\s*off)\b/.test(lower)) {
+    parsed.intent = 'logout';
+    parsed.action = 'logout';
     return parsed;
   }
 
-  if (/(?:show|view|list).*(?:device|devices|esp32)/.test(lower)) {
-    parsed.intent = 'show_devices';
-    parsed.action = 'show_devices';
+  // ── NAVIGATION ───────────────────────────────────────────────────────────
+  // Check navigation intent – only when no action keywords are present
+  const hasActionKeywords = /\b(on|off|enable|disable|start|stop|add|create|new|register|turn|toggle|jammer)\b/.test(lower);
+
+  if (!hasActionKeywords) {
+    const navMap = [
+      { pattern: /\b(dashboard|home)\b/, route: '/dashboard' },
+      { pattern: /\b(infrastructure|map|location|floor|block|campus)\b/, route: '/infrastructure' },
+      { pattern: /\b(devices?|esp32)\b/, route: '/devices' },
+      { pattern: /\b(logs?|alerts?|detection)\b/, route: '/logs' },
+      { pattern: /\b(monitor(?:ing|e)?|live\s*monitor)\b/, route: '/monitoring' },
+      { pattern: /\b(users?|user\s*management)\b/, route: '/users' },
+      { pattern: /\b(reports?|analytics|statistics)\b/, route: '/reports' },
+    ];
+
+    const navMatch = navMap.find((n) => n.pattern.test(lower));
+    if (navMatch) {
+      parsed.intent = 'navigate';
+      parsed.action = 'navigate';
+      parsed.route = navMatch.route;
+      return parsed;
+    }
+  }
+
+  // ── SHOW / VIEW shortcuts ────────────────────────────────────────────────
+  if (/(?:show|view|list)\b.*\b(?:devices?|esp32)/.test(lower)) {
+    parsed.intent = 'navigate';
+    parsed.action = 'navigate';
     parsed.route = '/devices';
     return parsed;
   }
-
-  if (/(show|view).*(alert|alerts)/.test(lower)) {
-    parsed.intent = 'view_alerts';
-    parsed.action = 'view_alerts';
+  if (/(?:show|view)\b.*\b(?:alert|detection|log)/.test(lower)) {
+    parsed.intent = 'navigate';
+    parsed.action = 'navigate';
     parsed.route = '/logs';
     return parsed;
   }
+  if (/(?:show|view)\b.*\b(?:report|analytics|statistics)/.test(lower)) {
+    parsed.intent = 'navigate';
+    parsed.action = 'navigate';
+    parsed.route = '/reports';
+    return parsed;
+  }
+  if (/(?:show|view)\b.*\b(?:infrastructure|campus|block|floor)/.test(lower)) {
+    parsed.intent = 'navigate';
+    parsed.action = 'navigate';
+    parsed.route = '/infrastructure';
+    return parsed;
+  }
 
-  if (/(show|view).*(report|analytics|statistics)/.test(lower)) {
-    parsed.intent = 'view_reports';
-    parsed.action = 'view_reports';
+  // ── INFRASTRUCTURE: ADD BLOCK ─────────────────────────────────────────────
+  // "add block Block A" / "create block Engineering Block" / "add new block Block B"
+  const addBlockMatch = /(?:add|create|new)\s+(?:a\s+)?(?:new\s+)?block\s+(.+)/i.exec(original);
+  if (addBlockMatch) {
+    parsed.intent = 'add_block';
+    parsed.action = 'add_block';
+    parsed.blockName = addBlockMatch[1].trim();
+    return parsed;
+  }
+
+  // ── INFRASTRUCTURE: ADD FLOOR ─────────────────────────────────────────────
+  // "add floor 2nd Floor to block Block A" / "create floor Ground Floor in Block B"
+  const addFloorMatch =
+    /(?:add|create|new)\s+(?:a\s+)?(?:new\s+)?floor\s+(.+?)\s+(?:to|in|for|under)\s+block\s+(.+)/i.exec(
+      original
+    ) ||
+    /(?:add|create|new)\s+(?:a\s+)?(?:new\s+)?floor\s+(.+)/i.exec(original);
+
+  if (addFloorMatch) {
+    parsed.intent = 'add_floor';
+    parsed.action = 'add_floor';
+    parsed.floorName = addFloorMatch[1].trim();
+    parsed.parentBlockName = addFloorMatch[2] ? addFloorMatch[2].trim() : null;
+    return parsed;
+  }
+
+  // ── INFRASTRUCTURE: ADD CLASSROOM / ROOM ─────────────────────────────────
+  // "add classroom Room 101 to floor 1st Floor" / "add room 203 in floor Ground Floor"
+  const addRoomMatch =
+    /(?:add|create|new)\s+(?:a\s+)?(?:new\s+)?(?:classroom|room)\s+(.+?)\s+(?:to|in|for|on)\s+(?:floor\s+)?(.+)/i.exec(
+      original
+    ) ||
+    /(?:add|create|new)\s+(?:a\s+)?(?:new\s+)?(?:classroom|room)\s+(.+)/i.exec(original);
+
+  if (addRoomMatch) {
+    parsed.intent = 'add_classroom';
+    parsed.action = 'add_classroom';
+    parsed.roomName = addRoomMatch[1].trim();
+    parsed.parentFloorName = addRoomMatch[2] ? addRoomMatch[2].trim() : null;
+    return parsed;
+  }
+
+  // ── ESP32 DEVICE: MONITORING ON/OFF ──────────────────────────────────────
+  // "turn on ESP32-A101" / "ESP32-A101 on" / "enable monitoring ESP32-A101"
+  const deviceOnPatterns = [
+    /(?:turn\s+on|enable|start|power\s+on|activate)\s+(?:monitoring\s+(?:for\s+)?)?(?:device\s+)?(.+)/i,
+    /(?:device\s+)?(.+?)\s+(?:on|enable|start)/i,
+  ];
+  const deviceOffPatterns = [
+    /(?:turn\s+off|disable|stop|power\s+off|deactivate)\s+(?:monitoring\s+(?:for\s+)?)?(?:device\s+)?(.+)/i,
+    /(?:device\s+)?(.+?)\s+(?:off|disable|stop)/i,
+  ];
+
+  // Simple "on" / "off" for named devices – highest specificity
+  if (/\b(turn\s+on|enable|start|power\s+on|activate)\b/.test(lower) && !(/jammer/i.test(lower))) {
+    if (deviceId || targetAll) {
+      parsed.intent = 'device_on';
+      parsed.action = 'device_on';
+      return parsed;
+    }
+  }
+  if (/\b(turn\s+off|disable|stop|power\s+off|deactivate)\b/.test(lower) && !(/jammer/i.test(lower))) {
+    if (deviceId || targetAll) {
+      parsed.intent = 'device_off';
+      parsed.action = 'device_off';
+      return parsed;
+    }
+  }
+
+  // Pattern: "ESP32-A101 on" or "ESP32-A101 off"
+  if (deviceId) {
+    if (/\bon\b/.test(lower) && !/jammer/.test(lower)) {
+      parsed.intent = 'device_on';
+      parsed.action = 'device_on';
+      return parsed;
+    }
+    if (/\boff\b/.test(lower) && !/jammer/.test(lower)) {
+      parsed.intent = 'device_off';
+      parsed.action = 'device_off';
+      return parsed;
+    }
+  }
+
+  // "all on" / "all off"
+  if (targetAll) {
+    if (/\bon\b/.test(lower) && !/jammer/.test(lower)) {
+      parsed.intent = 'device_on';
+      parsed.action = 'device_on';
+      return parsed;
+    }
+    if (/\boff\b/.test(lower) && !/jammer/.test(lower)) {
+      parsed.intent = 'device_off';
+      parsed.action = 'device_off';
+      return parsed;
+    }
+  }
+
+  // ── JAMMER CONTROL ────────────────────────────────────────────────────────
+  if (/(?:turn\s+on|enable|activate)\b.*\bjammer\b/.test(lower)) {
+    parsed.intent = 'jammer_on';
+    parsed.action = 'jammer_on';
+    return parsed;
+  }
+  if (/(?:turn\s+off|disable|deactivate)\b.*\bjammer\b/.test(lower)) {
+    parsed.intent = 'jammer_off';
+    parsed.action = 'jammer_off';
+    return parsed;
+  }
+
+  // ── MONITORING TOGGLE ─────────────────────────────────────────────────────
+  if (/(?:turn\s+on|start|enable)\b.*\bmonitor(?:ing)?\b/.test(lower) || /monitor(?:ing)?\s+on/.test(lower)) {
+    parsed.intent = 'monitoring_on';
+    parsed.action = 'monitoring_on';
+    return parsed;
+  }
+  if (/(?:turn\s+off|stop|disable)\b.*\bmonitor(?:ing)?\b/.test(lower) || /monitor(?:ing)?\s+off/.test(lower)) {
+    parsed.intent = 'monitoring_off';
+    parsed.action = 'monitoring_off';
+    return parsed;
+  }
+
+  // ── LOCATE / FIND NEAREST ─────────────────────────────────────────────────
+  if (/(locate|find).*(nearest|closest).*device/.test(lower) || /find.*nearest.*device/.test(lower)) {
+    parsed.intent = 'find_nearest';
+    parsed.action = 'find_nearest';
+    return parsed;
+  }
+
+  // ── GENERATE REPORT ───────────────────────────────────────────────────────
+  if (/(generate|create|show|make).*(report|analytics)/.test(lower)) {
+    parsed.intent = 'generate_report';
+    parsed.action = 'generate_report';
     parsed.route = '/reports';
     return parsed;
   }
 
+  // ── SEARCH STUDENT ────────────────────────────────────────────────────────
   if (/search.*student/.test(lower) || /find.*student/.test(lower)) {
     parsed.intent = 'search_student';
     parsed.action = 'search_student';
@@ -77,109 +254,179 @@ function parseIntent(text) {
     return parsed;
   }
 
-  if (/(locate|find).*(nearest|closest).*device/.test(lower) || /find.*nearest.*device/.test(lower)) {
-    parsed.intent = 'find_nearest';
-    parsed.action = 'find_nearest';
-    return parsed;
-  }
-
-  if (/(?:turn on|start|enable)\b.*\bmonitor(?:ing)?\b/.test(lower) || /monitoring\s+on/.test(lower)) {
-    parsed.intent = 'start_monitoring';
-    parsed.action = 'start';
-    return parsed;
-  }
-
-  if (/(?:turn off|stop|disable|power off)\b.*\bmonitor(?:ing)?\b/.test(lower) || /monitoring\s+off/.test(lower)) {
-    parsed.intent = 'stop_monitoring';
-    parsed.action = 'stop';
-    return parsed;
-  }
-
-  if (/(?:turn on|start|enable)\b.*\b(device|esp32)\b/.test(lower) || /power on\b.*\b(device|esp32)\b/.test(lower)) {
-    parsed.intent = 'start_device';
-    parsed.action = 'start';
-    return parsed;
-  }
-
-  if (/(?:turn off|stop|disable|power off)\b.*\b(device|esp32)\b/.test(lower)) {
-    parsed.intent = 'stop_device';
-    parsed.action = 'stop';
-    return parsed;
-  }
-
-  if (/(?:turn on|enable|activate)\b.*\bjammer\b/.test(lower)) {
-    parsed.intent = 'toggle_jammer';
-    parsed.action = 'toggle_jammer';
-    return parsed;
-  }
-
-  if (/(?:turn off|disable|deactivate)\b.*\bjammer\b/.test(lower)) {
-    parsed.intent = 'toggle_jammer';
-    parsed.action = 'toggle_jammer';
-    return parsed;
-  }
-
-  if (/(toggle|switch).*(monitoring)/.test(lower) && !/jammer/.test(lower)) {
-    parsed.intent = 'toggle_monitoring';
-    parsed.action = 'toggle_monitoring';
-    return parsed;
-  }
-
-  if (/(generate|create|show).*(report|analytics)/.test(lower)) {
-    parsed.intent = 'generate_report';
-    parsed.action = 'generate_report';
-    return parsed;
-  }
-
-  if (/\b(locat(e|ing)|find).*\b/.test(lower) && /device/.test(lower)) {
-    parsed.intent = 'locate';
-    parsed.action = 'locate';
-    return parsed;
-  }
-
   return parsed;
 }
 
-async function queueDeviceCommand(parsed) {
-  if (!parsed.action || parsed.action === 'unknown') {
-    return { message: "I couldn't turn that into a device command." };
-  }
+// ─── DEVICE CONTROL HELPER ────────────────────────────────────────────────
+async function applyDeviceAction(parsed, io) {
+  const { action, deviceId, target } = parsed;
+  const allDevices = target === 'all';
 
-  const targetDeviceId = parsed.deviceId;
-  const allDevices = parsed.target === 'all';
-  let command = { action: parsed.action };
-  if (parsed.macAddress) command.macAddress = parsed.macAddress;
-
-  if (parsed.action === 'find_nearest' && parsed.macAddress) {
-    const nearest = await DetectionLog.findOne({ macAddress: parsed.macAddress }).sort({ rssi: -1 }).populate('esp32DeviceId');
-    if (!nearest || !nearest.esp32DeviceId) {
-      return { message: 'I could not find a recent detection for that MAC address.' };
-    }
-    const device = await ESP32Device.findById(nearest.esp32DeviceId._id);
-    if (!device) return { message: 'The nearest device record is missing.' };
-    if (device.status !== 'online') return { message: `Device ${device.deviceId} is currently offline.` };
-    device.pendingCommand = { type: 'locate', macAddress: parsed.macAddress };
-    await device.save();
-    return { message: `Queued locate command for nearest device ${device.deviceId}.` };
-  }
-
-  if (targetDeviceId) {
-    const device = await ESP32Device.findOne({ deviceId: targetDeviceId });
-    if (!device) return { message: `I couldn't find device ${targetDeviceId}.` };
-    if (device.status !== 'online') return { message: `Device ${device.deviceId} is offline.` };
-    device.pendingCommand = command;
-    await device.save();
-    return { message: `Queued ${parsed.action.replace('_', ' ')} command for ${device.deviceId}.` };
-  }
-
+  let devices = [];
   if (allDevices) {
-    await ESP32Device.updateMany({}, { pendingCommand: command });
-    return { message: `Queued ${parsed.action.replace('_', ' ')} command for all devices.` };
+    devices = await ESP32Device.find({});
+  } else if (deviceId) {
+    const d = await ESP32Device.findOne({ deviceId });
+    if (!d) return { success: false, message: `Device "${deviceId}" not found.` };
+    devices = [d];
+  } else {
+    return {
+      success: false,
+      message: 'Please specify a device name (e.g. "ESP32-A101") or say "all devices".',
+    };
   }
 
-  return { message: 'Please specify a device or say all devices for this command.' };
+  if (!devices.length) {
+    return { success: false, message: 'No devices found to control.' };
+  }
+
+  const results = [];
+  for (const device of devices) {
+    if (action === 'device_on') {
+      device.monitoringStatus = 'active';
+      await device.save();
+      if (io) {
+        io.emit('deviceUpdate', {
+          deviceId: device._id,
+          monitoringStatus: 'active',
+          jammerStatus: device.jammerStatus,
+        });
+      }
+      results.push(`${device.deviceId} turned ON`);
+    } else if (action === 'device_off') {
+      device.monitoringStatus = 'inactive';
+      device.jammerStatus = 'inactive';
+      await device.save();
+      if (io) {
+        io.emit('deviceUpdate', {
+          deviceId: device._id,
+          monitoringStatus: 'inactive',
+          jammerStatus: 'inactive',
+        });
+      }
+      results.push(`${device.deviceId} turned OFF`);
+    } else if (action === 'jammer_on') {
+      device.jammerStatus = 'active';
+      await device.save();
+      if (io) {
+        io.emit('jammerUpdate', { deviceId: device._id, jammerStatus: 'active' });
+      }
+      results.push(`Jammer ON for ${device.deviceId}`);
+    } else if (action === 'jammer_off') {
+      device.jammerStatus = 'inactive';
+      await device.save();
+      if (io) {
+        io.emit('jammerUpdate', { deviceId: device._id, jammerStatus: 'inactive' });
+      }
+      results.push(`Jammer OFF for ${device.deviceId}`);
+    } else if (action === 'monitoring_on') {
+      device.monitoringStatus = 'active';
+      await device.save();
+      if (io) {
+        io.emit('deviceUpdate', {
+          deviceId: device._id,
+          monitoringStatus: 'active',
+          jammerStatus: device.jammerStatus,
+        });
+      }
+      results.push(`Monitoring ON for ${device.deviceId}`);
+    } else if (action === 'monitoring_off') {
+      device.monitoringStatus = 'inactive';
+      device.jammerStatus = 'inactive';
+      await device.save();
+      if (io) {
+        io.emit('deviceUpdate', {
+          deviceId: device._id,
+          monitoringStatus: 'inactive',
+          jammerStatus: 'inactive',
+        });
+      }
+      results.push(`Monitoring OFF for ${device.deviceId}`);
+    }
+  }
+
+  return { success: true, message: results.join(', ') + '.' };
 }
 
+// ─── INFRASTRUCTURE HELPER ────────────────────────────────────────────────
+async function handleInfrastructureCreate(parsed, io) {
+  const { action, blockName, floorName, roomName, parentBlockName, parentFloorName } = parsed;
+
+  if (action === 'add_block') {
+    if (!blockName) return { success: false, message: 'Please specify a block name.' };
+    const existing = await Block.findOne({ blockName: { $regex: new RegExp(`^${blockName}$`, 'i') } });
+    if (existing) return { success: false, message: `Block "${blockName}" already exists.` };
+    const block = await Block.create({ blockName });
+    if (io) io.emit('infrastructureUpdate', { type: 'block', action: 'create', data: block });
+    return { success: true, message: `Block "${block.blockName}" created successfully.`, route: '/infrastructure' };
+  }
+
+  if (action === 'add_floor') {
+    if (!floorName) return { success: false, message: 'Please specify a floor name.' };
+
+    let blockId = null;
+    if (parentBlockName) {
+      const block = await Block.findOne({ blockName: { $regex: new RegExp(parentBlockName, 'i') } });
+      if (!block) return { success: false, message: `Block "${parentBlockName}" not found. Create the block first.` };
+      blockId = block._id;
+    } else {
+      // Use most recently created block
+      const latestBlock = await Block.findOne().sort({ createdAt: -1 });
+      if (!latestBlock) return { success: false, message: 'No blocks exist yet. Please create a block first.' };
+      blockId = latestBlock._id;
+    }
+
+    const floor = await Floor.create({ floorName, blockId });
+    await floor.populate('blockId', 'blockName');
+    if (io) io.emit('infrastructureUpdate', { type: 'floor', action: 'create', data: floor });
+    return {
+      success: true,
+      message: `Floor "${floor.floorName}" added to block "${floor.blockId.blockName}".`,
+      route: '/infrastructure',
+    };
+  }
+
+  if (action === 'add_classroom') {
+    if (!roomName) return { success: false, message: 'Please specify a room name.' };
+
+    let floorId = null;
+    let blockId = null;
+
+    if (parentFloorName) {
+      const floor = await Floor.findOne({ floorName: { $regex: new RegExp(parentFloorName, 'i') } }).populate(
+        'blockId'
+      );
+      if (!floor)
+        return {
+          success: false,
+          message: `Floor "${parentFloorName}" not found. Create the floor first.`,
+        };
+      floorId = floor._id;
+      blockId = floor.blockId?._id;
+    } else {
+      // Use most recently created floor
+      const latestFloor = await Floor.findOne().sort({ createdAt: -1 }).populate('blockId');
+      if (!latestFloor) return { success: false, message: 'No floors exist yet. Please create a floor first.' };
+      floorId = latestFloor._id;
+      blockId = latestFloor.blockId?._id;
+    }
+
+    if (!blockId) return { success: false, message: 'Could not determine block for this floor.' };
+
+    const room = await Classroom.create({ roomName, floorId, blockId });
+    await room.populate(['blockId', 'floorId']);
+    if (io) io.emit('infrastructureUpdate', { type: 'classroom', action: 'create', data: room });
+    return {
+      success: true,
+      message: `Classroom "${room.roomName}" created successfully.`,
+      route: '/infrastructure',
+    };
+  }
+
+  return { success: false, message: 'Unknown infrastructure action.' };
+}
+
+// ─── MAIN HANDLER ────────────────────────────────────────────────────────
 exports.processVoice = async (req, res, next) => {
   try {
     const { text, confirm } = req.body;
@@ -187,59 +434,112 @@ exports.processVoice = async (req, res, next) => {
     if (!text) return res.status(400).json({ success: false, message: 'No command text was provided.' });
 
     const parsed = parseIntent(text);
-    const requiresConfirmation = ['stop', 'stop_monitoring', 'stop_device', 'generate_report'].includes(parsed.action);
+    const io = req.app.get('io');
+
+    // Actions that need confirmation before execution
+    const requiresConfirmation = ['device_off', 'monitoring_off', 'generate_report'].includes(parsed.action);
 
     if (requiresConfirmation && !confirm) {
-      const command = await VoiceCommand.create({ text, intent: parsed.intent, action: parsed.action, target: parsed.target, user: userId });
+      const actionLabel =
+        parsed.action === 'device_off'
+          ? `turn OFF ${parsed.target === 'all' ? 'all devices' : parsed.deviceId || 'the device'}`
+          : parsed.action === 'monitoring_off'
+          ? `disable monitoring${parsed.deviceId ? ' for ' + parsed.deviceId : ''}`
+          : 'generate a report';
+
+      await VoiceCommand.create({
+        text,
+        intent: parsed.intent,
+        action: parsed.action,
+        target: parsed.target || parsed.deviceId,
+        user: userId,
+      });
+
       return res.json({
         success: true,
         needsConfirmation: true,
-        message: `Are you sure you want to ${parsed.action.replace('_', ' ')}?`,
-        commandId: command._id,
+        message: `Are you sure you want to ${actionLabel}?`,
         parsed,
       });
     }
 
     let responseMessage = 'Command received.';
     let route = parsed.route || null;
-    let commandResult = null;
 
-    if (parsed.action === 'navigate' && route) {
-      responseMessage = `Navigating to ${route}.`;
-    } else if (parsed.action === 'show_devices') {
-      responseMessage = 'Opening devices page.';
-      route = '/devices';
-    } else if (parsed.action === 'view_alerts') {
-      responseMessage = 'Showing alerts and detections.';
-      route = '/logs';
-    } else if (parsed.action === 'view_reports') {
-      responseMessage = 'Opening reports and analytics.';
-      route = '/reports';
-    } else if (parsed.action === 'search_student') {
-      responseMessage = parsed.target ? `Searching for student ${parsed.target}.` : 'Searching for students.';
-    } else if (['locate', 'find_nearest', 'start', 'stop', 'toggle_jammer', 'toggle_monitoring'].includes(parsed.action)) {
-      commandResult = await queueDeviceCommand(parsed);
-      responseMessage = commandResult.message;
+    // ── HANDLE EACH ACTION ─────────────────────────────────────────────────
+    if (parsed.action === 'navigate') {
+      const labelMap = {
+        '/dashboard': 'Dashboard',
+        '/infrastructure': 'Infrastructure',
+        '/devices': 'ESP32 Devices',
+        '/logs': 'Detection Logs',
+        '/monitoring': 'Monitoring',
+        '/users': 'Users',
+        '/reports': 'Reports',
+      };
+      const label = labelMap[route] || route;
+      responseMessage = `Opening ${label}.`;
+
+    } else if (parsed.action === 'logout') {
+      responseMessage = 'You have been logged out.';
+
+    } else if (
+      ['device_on', 'device_off', 'jammer_on', 'jammer_off', 'monitoring_on', 'monitoring_off'].includes(
+        parsed.action
+      )
+    ) {
+      const result = await applyDeviceAction(parsed, io);
+      responseMessage = result.message;
+      if (!result.success) {
+        await VoiceCommand.create({ text, intent: parsed.intent, action: parsed.action, target: parsed.target || parsed.deviceId, response: { message: responseMessage }, user: userId });
+        return res.json({ success: false, needsConfirmation: false, message: responseMessage, parsed });
+      }
+
+    } else if (['add_block', 'add_floor', 'add_classroom'].includes(parsed.action)) {
+      const result = await handleInfrastructureCreate(parsed, io);
+      responseMessage = result.message;
+      if (result.route) route = result.route;
+      if (!result.success) {
+        await VoiceCommand.create({ text, intent: parsed.intent, action: parsed.action, target: null, response: { message: responseMessage }, user: userId });
+        return res.json({ success: false, needsConfirmation: false, message: responseMessage, parsed });
+      }
+
     } else if (parsed.action === 'generate_report') {
       responseMessage = 'Generating the requested report. Please check the Reports page.';
       route = '/reports';
-    } else if (parsed.intent === 'unknown') {
-      responseMessage = "I didn't understand that command. Please try again.";
+
+    } else if (parsed.action === 'find_nearest') {
+      if (parsed.macAddress) {
+        const nearest = await DetectionLog.findOne({ macAddress: parsed.macAddress })
+          .sort({ rssi: -1 })
+          .populate('esp32DeviceId');
+        if (nearest && nearest.esp32DeviceId) {
+          responseMessage = `Nearest device for that MAC is ${nearest.esp32DeviceId.deviceId}.`;
+        } else {
+          responseMessage = 'No recent detection found for that MAC address.';
+        }
+      } else {
+        responseMessage = 'Please provide a MAC address to locate the nearest device.';
+      }
+
+    } else if (parsed.action === 'search_student') {
+      responseMessage = parsed.target ? `Searching for student "${parsed.target}".` : 'Please specify a student to search for.';
+
+    } else if (parsed.intent === 'wake') {
+      responseMessage = 'Yes, I am listening. How can I help?';
+
+    } else {
+      responseMessage = "I didn't understand that command.";
     }
 
-    const saved = await VoiceCommand.create({
+    await VoiceCommand.create({
       text,
       intent: parsed.intent,
       action: parsed.action,
-      target: parsed.target,
+      target: parsed.target || parsed.deviceId || parsed.blockName || parsed.floorName || parsed.roomName,
       response: { message: responseMessage },
       user: userId,
     });
-
-    const io = req.app.get('io');
-    if (io && commandResult) {
-      io.emit('voiceAction', { success: true, action: parsed.action, text, parsed, message: responseMessage });
-    }
 
     return res.json({
       success: true,
@@ -247,9 +547,9 @@ exports.processVoice = async (req, res, next) => {
       message: responseMessage,
       route,
       parsed,
-      command: saved,
     });
   } catch (err) {
+    console.error('[VoiceController] Error:', err);
     next(err);
   }
 };

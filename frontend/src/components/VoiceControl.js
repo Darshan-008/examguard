@@ -1,176 +1,271 @@
-﻿import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import api from '../services/api';
-import { RiMicLine, RiCloseLine } from 'react-icons/ri';
+import { RiMicLine, RiCloseLine, RiVolumeUpLine } from 'react-icons/ri';
 
-const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition || window.mozSpeechRecognition || window.msSpeechRecognition || null;
+// ─── Speech Recognition ──────────────────────────────────────────────────────
+const SpeechRecognition =
+  window.SpeechRecognition ||
+  window.webkitSpeechRecognition ||
+  window.mozSpeechRecognition ||
+  window.msSpeechRecognition ||
+  null;
 
-const NAVIGATION_COMMANDS = [
-  { pattern: /\b(dashboard|home)\b/, route: '/dashboard', label: 'Dashboard' },
-  { pattern: /\b(infrastructure|map|location|floor)\b/, route: '/infrastructure', label: 'Infrastructure' },
-  { pattern: /\b(devices|esp32|device)\b/, route: '/devices', label: 'Devices' },
-  { pattern: /\b(logs|alerts|detection)\b/, route: '/logs', label: 'Detection Logs' },
-  { pattern: /\b(monitoring|monitor|live monitoring)\b/, route: '/monitoring', label: 'Monitoring' },
-  { pattern: /\b(users|user management)\b/, route: '/users', label: 'Users' },
-  { pattern: /\b(reports|analytics|statistics)\b/, route: '/reports', label: 'Reports' },
+// ─── Navigation Fast-Path ─────────────────────────────────────────────────────
+const NAV_COMMANDS = [
+  { pattern: /\b(dashboard|home)\b/i,                           route: '/dashboard',      label: 'Dashboard' },
+  { pattern: /\b(infrastructure|campus|map|block|floor)\b/i,   route: '/infrastructure', label: 'Infrastructure' },
+  { pattern: /\b(devices?|esp32)\b/i,                           route: '/devices',        label: 'ESP32 Devices' },
+  { pattern: /\b(logs?|alerts?|detections?)\b/i,                route: '/logs',           label: 'Detection Logs' },
+  { pattern: /\b(monitor(?:ing|e)?|live\s*monitor)\b/i,        route: '/monitoring',     label: 'Monitoring' },
+  { pattern: /\b(users?|user\s*management)\b/i,                 route: '/users',          label: 'Users' },
+  { pattern: /\b(reports?|analytics|statistics)\b/i,            route: '/reports',        label: 'Reports' },
 ];
 
-const isLogoutCommand = (text) => /\b(log ?out|sign ?out|sign ?off)\b/.test(text);
-const stripWakeWord = (text) => text.replace(/^\s*(hey\s+examguard|examguard)\b\s*/i, '').trim();
+const ACTION_KEYWORDS = /\b(on|off|enable|disable|start|stop|add|create|new|register|turn|toggle|jammer|delete|remove)\b/i;
+const isLogoutCommand = (t) => /\b(log\s*out|sign\s*out|sign\s*off)\b/i.test(t);
+const isWakeOnly     = (t) => /^\s*(hey\s+examguard|examguard)\s*$/i.test(t);
+const stripWakeWord  = (t) => t.replace(/^\s*(hey\s+examguard|examguard)\b\s*/i, '').trim();
 
+function getLocalNavRoute(text) {
+  if (ACTION_KEYWORDS.test(text)) return null; // let backend handle actions
+  return NAV_COMMANDS.find((c) => c.pattern.test(text)) || null;
+}
+
+// ─── COMPONENT ────────────────────────────────────────────────────────────────
 export default function VoiceControl() {
   const { logout } = useAuth();
-  const navigate = useNavigate();
-  const [listening, setListening] = useState(false);
-  const [statusMessage, setStatusMessage] = useState('Voice assistant ready');
-  const [recognizedText, setRecognizedText] = useState('');
-  const recognitionRef = useRef(null);
-  const listeningRef = useRef(false);
-  const recognitionStartedRef = useRef(false);
-  const processingRef = useRef(false);
-  const awaitingCommandRef = useRef(false);
+  const navigate   = useNavigate();
 
-  const restartRecognition = useCallback(() => {
-    if (!listeningRef.current || !recognitionRef.current || recognitionStartedRef.current) return;
+  const [listening,      setListening]      = useState(false);
+  const [statusMessage,  setStatusMessage]  = useState('Voice assistant ready');
+  const [recognizedText, setRecognizedText] = useState('');
+  const [lastCommand,    setLastCommand]    = useState('');
+  const [pulse,          setPulse]          = useState(false);
+
+  // ── Stable refs (never stale in callbacks) ───────────────────────────────
+  const recognitionRef        = useRef(null);
+  const listeningRef          = useRef(false);
+  const recognitionStartedRef = useRef(false);
+  const processingRef         = useRef(false);
+  const speakingRef           = useRef(false);       // true while TTS is playing
+  const awaitingConfirmRef    = useRef(false);       // stores pending command string or false
+  const pendingRestartRef     = useRef(false);       // restart queued while speaking/processing
+
+  // Stable function refs – updated every render so callbacks never go stale
+  const navigateRef = useRef(navigate);
+  const logoutRef   = useRef(logout);
+  useEffect(() => { navigateRef.current = navigate; }, [navigate]);
+  useEffect(() => { logoutRef.current   = logout;   }, [logout]);
+
+  // ─── Core: start recognition ────────────────────────────────────────────
+  const startRecognition = useCallback(() => {
+    if (
+      !listeningRef.current ||
+      !recognitionRef.current ||
+      recognitionStartedRef.current ||
+      speakingRef.current ||          // don't mic-up while TTS is playing
+      processingRef.current
+    ) return;
+
     try {
       recognitionRef.current.start();
-    } catch (err) {
-      console.warn('[Voice] restart failed', err);
+    } catch (_) {
+      // Already started – safe to ignore
     }
   }, []);
 
-  const getNavigationRoute = (text) => {
-    const lower = text.toLowerCase();
-    const match = NAVIGATION_COMMANDS.find((item) => item.pattern.test(lower));
-    return match ? match.route : null;
-  };
+  // ─── Core: speak text, then restart mic ─────────────────────────────────
+  //    ALWAYS stops recognition first so TTS audio doesn't feed back into mic.
+  const speak = useCallback((text, afterSpeak) => {
+    if (!text) {
+      afterSpeak?.();
+      return;
+    }
 
-  const getNavigationLabel = (route) => {
-    const page = NAVIGATION_COMMANDS.find((item) => item.route === route);
-    return page ? page.label : 'page';
-  };
+    // Stop recognition so TTS doesn't feed back into the mic
+    if (recognitionRef.current && recognitionStartedRef.current) {
+      try { recognitionRef.current.stop(); } catch (_) {}
+    }
 
-  const speak = useCallback((text) => {
-    if (!window.speechSynthesis || !text) return;
-    const utterance = new SpeechSynthesisUtterance(text);
-    utterance.lang = 'en-US';
-    // Speak and when finished, ensure recognition restarts if assistant is active
+    window.speechSynthesis?.cancel();
+    speakingRef.current = true;
+
+    const utterance      = new SpeechSynthesisUtterance(text);
+    utterance.lang       = 'en-US';
+    utterance.rate       = 1.05;
+    utterance.pitch      = 1.0;
+    utterance.volume     = 1.0;
+
     utterance.onend = () => {
-      if (listeningRef.current && recognitionRef.current && !recognitionStartedRef.current && !processingRef.current) {
-        setTimeout(() => {
-          restartRecognition();
-        }, 250);
+      speakingRef.current = false;
+      afterSpeak?.();
+      // Restart mic after TTS finishes (only if still in listening mode)
+      if (listeningRef.current && !processingRef.current) {
+        setTimeout(() => startRecognition(), 350);
       }
     };
-    window.speechSynthesis.speak(utterance);
-  }, [restartRecognition]);
 
+    utterance.onerror = () => {
+      speakingRef.current = false;
+      afterSpeak?.();
+      if (listeningRef.current && !processingRef.current) {
+        setTimeout(() => startRecognition(), 350);
+      }
+    };
+
+    window.speechSynthesis?.speak(utterance);
+  }, [startRecognition]);
+
+  // ─── Process a single command ────────────────────────────────────────────
   const processCommand = useCallback(async (commandText) => {
     const lower = commandText.toLowerCase();
-    setStatusMessage('Processing command...');
+    setStatusMessage('Processing...');
+    setPulse(true);
+    setTimeout(() => setPulse(false), 700);
 
+    // LOGOUT
     if (isLogoutCommand(lower)) {
-      logout();
-      navigate('/login');
-      setStatusMessage('Logged out successfully');
-      speak('You have been logged out');
+      speak('Logging you out. Goodbye!', () => {
+        logoutRef.current?.();
+        navigateRef.current?.('/login');
+      });
       return;
     }
 
-    const route = getNavigationRoute(lower);
-    if (route) {
-      const label = getNavigationLabel(route);
-      navigate(route);
-      setStatusMessage(`Opening ${label}`);
-      speak(`Opening ${label}`);
+    // FAST-PATH NAVIGATION (no backend call)
+    const navMatch = getLocalNavRoute(lower);
+    if (navMatch) {
+      navigateRef.current?.(navMatch.route);
+      setStatusMessage(`Opened ${navMatch.label}`);
+      speak(`Opening ${navMatch.label}`);
       return;
     }
 
+    // BACKEND
     try {
       const response = await api.post('/voice/process', { text: commandText });
       const data = response.data;
-      if (data.needsConfirmation) {
-        const approved = window.confirm(data.message);
-        if (approved) {
-          const confirmResponse = await api.post('/voice/process', { text: commandText, confirm: true });
-          const confirmData = confirmResponse.data;
-          setStatusMessage(confirmData.message || 'Command confirmed');
-          speak(confirmData.message);
-          if (confirmData.route) navigate(confirmData.route);
-        } else {
-          setStatusMessage('Command canceled');
-          speak('Okay, canceled.');
-        }
-      } else if (data.success) {
-        setStatusMessage(data.message || 'Command executed');
-        speak(data.message || 'Command executed');
-        if (data.route) navigate(data.route);
-      } else {
-        setStatusMessage(data.message || 'Command not recognized');
-        speak(data.message || 'I could not understand that command.');
-      }
-    } catch (error) {
-      console.error('[VoiceControl] Voice command failed', error);
-      setStatusMessage('Voice command failed');
-      speak('There was a problem processing your command.');
-    }
-  }, [logout, navigate, speak]);
 
+      if (data.needsConfirmation) {
+        awaitingConfirmRef.current = commandText;
+        setStatusMessage('Awaiting confirmation...');
+        speak(`${data.message} Say yes to confirm or no to cancel.`);
+        return;
+      }
+
+      setLastCommand(commandText);
+      setStatusMessage(data.message || (data.success ? 'Done' : 'Command not understood'));
+
+      if (data.success) {
+        speak(data.message || 'Done', () => {
+          if (data.route) navigateRef.current?.(data.route);
+        });
+      } else {
+        speak(data.message || "I couldn't do that. Please try again.");
+      }
+    } catch (err) {
+      console.error('[VoiceControl]', err);
+      setStatusMessage('Command failed');
+      speak('There was a problem. Please try again.');
+    }
+  }, [speak]);
+
+  // ─── Handle yes/no confirmation ─────────────────────────────────────────
+  const handleConfirmation = useCallback(async (text, pendingCommand) => {
+    const lower = text.toLowerCase();
+    if (/\b(yes|confirm|ok|okay|sure|proceed|do it)\b/.test(lower)) {
+      try {
+        const res  = await api.post('/voice/process', { text: pendingCommand, confirm: true });
+        const data = res.data;
+        setStatusMessage(data.message || 'Confirmed');
+        speak(data.message || 'Done', () => {
+          if (data.route) navigateRef.current?.(data.route);
+        });
+      } catch {
+        speak('Confirmation failed. Please try again.');
+      }
+    } else {
+      setStatusMessage('Cancelled');
+      speak('Okay, cancelled.');
+    }
+    awaitingConfirmRef.current = false;
+  }, [speak]);
+
+  // ─── Handle a finalized transcript ──────────────────────────────────────
   const handleFinal = useCallback(async (rawText) => {
-    if (!rawText || processingRef.current) return;
+    if (!rawText) return;
+    if (processingRef.current || speakingRef.current) return; // busy – ignore
 
     const cleanedText = rawText.trim();
-    const withoutWake = stripWakeWord(cleanedText);
-    const isWakeOnly = /^\s*(hey\s+examguard|examguard)\s*$/i.test(cleanedText);
-    const commandText = withoutWake || cleanedText;
+    const commandText = stripWakeWord(cleanedText) || cleanedText;
 
-    if (isWakeOnly) {
-      awaitingCommandRef.current = true;
-      setStatusMessage('Awaiting your command');
-      speak('Yes, I am listening.');
+    // Wake word only
+    if (isWakeOnly(cleanedText)) {
+      awaitingConfirmRef.current = false;
+      setStatusMessage("Listening for your command...");
+      speak("Yes, I'm listening. What would you like to do?");
       return;
     }
 
     if (!commandText) return;
-    processingRef.current = true;
-    awaitingCommandRef.current = false;
 
+    // Confirmation response
+    if (awaitingConfirmRef.current) {
+      const pending = awaitingConfirmRef.current;
+      awaitingConfirmRef.current = false;
+      processingRef.current = true;
+      await handleConfirmation(commandText, pending);
+      processingRef.current = false;
+      setStatusMessage(listeningRef.current ? 'Listening...' : 'Voice assistant stopped');
+      return;
+    }
+
+    // Normal command
+    processingRef.current = true;
     await processCommand(commandText);
     processingRef.current = false;
-    setStatusMessage('Listening...');
-    // Ensure recognition resumes after command processing
-    if (listeningRef.current) {
-      restartRecognition();
-    }
-  }, [processCommand, restartRecognition, speak]);
+    setStatusMessage(listeningRef.current ? 'Listening...' : 'Voice assistant stopped');
 
+    // If nothing was spoken (e.g. silent navigation), restart mic manually
+    if (listeningRef.current && !speakingRef.current) {
+      setTimeout(() => startRecognition(), 300);
+    }
+  }, [processCommand, handleConfirmation, speak, startRecognition]);
+
+  // Stable ref for handleFinal (used in recognition.onresult)
+  const handleFinalRef = useRef(handleFinal);
+  useEffect(() => { handleFinalRef.current = handleFinal; }, [handleFinal]);
+
+  // ─── Set up Speech Recognition once ─────────────────────────────────────
   useEffect(() => {
     if (!SpeechRecognition) {
-      setStatusMessage('Speech recognition not supported');
+      setStatusMessage('Speech recognition not supported in this browser');
       return;
     }
 
     const recognition = new SpeechRecognition();
-    recognition.continuous = true;
-    recognition.interimResults = true;
+    recognition.continuous      = false; // ← IMPORTANT: false gives cleaner single-utterance cycles
+    recognition.interimResults  = true;
     recognition.maxAlternatives = 1;
-    recognition.lang = 'en-US';
+    recognition.lang            = 'en-US';
 
     recognition.onresult = (event) => {
-      let interim = '';
-      let finalText = '';
+      let interimText = '';
+      let finalText   = '';
+
       for (let i = event.resultIndex; i < event.results.length; i++) {
         const result = event.results[i];
-        if (result.isFinal) finalText += result[0].transcript;
-        else interim += result[0].transcript;
+        if (result.isFinal) finalText   += result[0].transcript;
+        else                interimText += result[0].transcript;
       }
 
-      const display = `${finalText || ''}${interim || ''}`.trim();
-      setRecognizedText(display);
+      const display = `${finalText}${interimText}`.trim();
+      if (display) setRecognizedText(display);
 
       if (finalText) {
-        handleFinal(finalText.trim());
+        handleFinalRef.current(finalText.trim());
       }
     };
 
@@ -181,83 +276,135 @@ export default function VoiceControl() {
 
     recognition.onend = () => {
       recognitionStartedRef.current = false;
-      if (listeningRef.current) {
-        setTimeout(() => {
-          restartRecognition();
-        }, 500);
+      // Auto-restart unless we're speaking, processing, or not in listening mode
+      if (listeningRef.current && !processingRef.current && !speakingRef.current) {
+        setTimeout(() => startRecognition(), 250);
       }
     };
 
     recognition.onerror = (event) => {
-      const errorName = event?.error || 'unknown_error';
-      setStatusMessage(`Speech error: ${errorName}`);
+      const err = event?.error || 'unknown';
       recognitionStartedRef.current = false;
 
       if (!listeningRef.current) return;
-      if (['not-allowed', 'service-not-allowed', 'security', 'network'].includes(errorName)) {
+
+      if (['not-allowed', 'service-not-allowed', 'security'].includes(err)) {
         listeningRef.current = false;
         setListening(false);
-      } else if (['aborted', 'no-speech', 'audio-capture'].includes(errorName)) {
-        if (listeningRef.current && !processingRef.current) {
-          setTimeout(() => {
-            restartRecognition();
-          }, 500);
-        }
+        setStatusMessage('Microphone access denied. Please allow microphone.');
+        return;
+      }
+
+      // For no-speech / aborted / network – just restart
+      if (!speakingRef.current && !processingRef.current) {
+        setTimeout(() => startRecognition(), err === 'network' ? 1000 : 400);
       }
     };
 
     recognition.onnomatch = () => {
-      setStatusMessage('Speech not recognized. Please try again.');
+      setStatusMessage("Didn't catch that – please try again.");
     };
 
     recognitionRef.current = recognition;
+
     return () => {
-      listeningRef.current = false;
+      listeningRef.current          = false;
       recognitionStartedRef.current = false;
       try { recognition.stop(); } catch (_) {}
       recognitionRef.current = null;
     };
-  }, [handleFinal, restartRecognition]);
+  }, [startRecognition]); // stable dep – only runs once on mount
 
+  // ─── Start / Stop controls ───────────────────────────────────────────────
   const startListening = () => {
     if (!SpeechRecognition) {
       setStatusMessage('Speech recognition not supported');
       return;
     }
-    listeningRef.current = true;
-    processingRef.current = false;
+    listeningRef.current   = true;
+    processingRef.current  = false;
+    speakingRef.current    = false;
+    awaitingConfirmRef.current = false;
     setListening(true);
-    setStatusMessage('Waiting for speech...');
-    if (recognitionRef.current && !recognitionStartedRef.current) {
-      try { recognitionRef.current.start(); } catch (error) { console.warn('[Voice] Start failed', error); }
-    }
+    setRecognizedText('');
+    setLastCommand('');
+    setStatusMessage('Starting...');
+
+    // Speak greeting first, mic starts in speak's onend callback
+    speak('Voice assistant activated. How can I help you?');
   };
 
   const stopListening = () => {
-    listeningRef.current = false;
-    processingRef.current = false;
+    listeningRef.current       = false;
+    processingRef.current      = false;
+    speakingRef.current        = false;
+    awaitingConfirmRef.current = false;
     setListening(false);
-    setStatusMessage('Voice assistant stopped');
+    setStatusMessage('Voice assistant off');
+    setRecognizedText('');
+
     if (recognitionRef.current && recognitionStartedRef.current) {
-      try { recognitionRef.current.stop(); } catch (error) { console.warn('[Voice] Stop failed', error); }
+      try { recognitionRef.current.stop(); } catch (_) {}
     }
+    window.speechSynthesis?.cancel();
   };
 
+  // ─── Render ──────────────────────────────────────────────────────────────
   return (
     <div className="flex items-center gap-3">
-      <div className="hidden sm:flex flex-col text-right text-white text-xs tracking-[0.14em]">
-        <span className="font-semibold">Voice Control</span>
-        <span className="text-slate-400">{statusMessage}</span>
+
+      {/* Status panel */}
+      <div className="hidden md:flex flex-col text-right min-w-0 gap-0.5">
+        <span className="text-white text-xs font-semibold tracking-wide">Voice Control</span>
+        <span className={`text-[11px] truncate max-w-[200px] transition-colors duration-300 ${
+          listening ? 'text-cyan-400' : 'text-slate-400'
+        }`}>
+          {statusMessage}
+        </span>
+        {recognizedText && listening && (
+          <span className="text-[10px] text-slate-500 italic truncate max-w-[200px]">
+            &ldquo;{recognizedText}&rdquo;
+          </span>
+        )}
       </div>
-      <div className="hidden sm:block text-xs text-slate-300 text-right max-w-[220px] truncate">
-        {recognizedText ? `Recognized: ${recognizedText}` : 'Speak after starting voice control'}
-      </div>
+
+      {/* Last command badge */}
+      {lastCommand && listening && (
+        <div className="hidden lg:flex items-center gap-1 bg-white/5 border border-white/10 rounded-full px-2 py-1 max-w-[160px]">
+          <RiVolumeUpLine size={10} className="text-cyan-400 flex-shrink-0" />
+          <span className="text-[10px] text-slate-400 truncate">{lastCommand}</span>
+        </div>
+      )}
+
+      {/* Mic button */}
       <button
+        id="voice-control-btn"
         onClick={listening ? stopListening : startListening}
-        className={`h-11 w-11 rounded-full transition-colors duration-200 flex items-center justify-center ${listening ? 'bg-red-500 hover:bg-red-600' : 'bg-cyan-500 hover:bg-cyan-600'}`}
+        className={`relative h-10 w-10 rounded-full flex items-center justify-center
+          transition-all duration-300 focus:outline-none focus:ring-2
+          focus:ring-offset-2 focus:ring-offset-slate-900 flex-shrink-0 ${
+          listening
+            ? 'bg-red-500 hover:bg-red-600 focus:ring-red-500 shadow-lg shadow-red-500/30'
+            : 'bg-cyan-500 hover:bg-cyan-600 focus:ring-cyan-500 shadow-lg shadow-cyan-500/20'
+        }`}
         aria-label={listening ? 'Stop voice assistant' : 'Start voice assistant'}
+        title={listening
+          ? 'Click to stop'
+          : 'Start voice control — say "open dashboard", "ESP32-A101 on", "add block Block A"'}
       >
-        {listening ? <RiCloseLine size={22} className="text-white" /> : <RiMicLine size={22} className="text-white" />}
+        {/* Listening pulse */}
+        {listening && !processingRef.current && (
+          <span className="absolute inset-0 rounded-full animate-ping bg-red-400 opacity-25 pointer-events-none" />
+        )}
+        {/* Processing pulse */}
+        {pulse && (
+          <span className="absolute inset-0 rounded-full animate-ping bg-cyan-400 opacity-40 pointer-events-none" />
+        )}
+
+        {listening
+          ? <RiCloseLine size={20} className="text-white relative z-10" />
+          : <RiMicLine   size={20} className="text-white relative z-10" />
+        }
       </button>
     </div>
   );
