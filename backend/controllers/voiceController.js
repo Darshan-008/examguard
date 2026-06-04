@@ -4,6 +4,7 @@ const DetectionLog = require('../models/DetectionLog');
 const Block = require('../models/Block');
 const Floor = require('../models/Floor');
 const Classroom = require('../models/Classroom');
+const User = require('../models/User');
 
 const macRegex = /([0-9A-Fa-f]{2}(?::|-)?){5}[0-9A-Fa-f]{2}/;
 const esp32Regex = /\b(ESP[-_ ]?32[-_ ]?[A-Z0-9]+)\b/i;
@@ -61,7 +62,7 @@ function parseIntent(text) {
 
   // ── NAVIGATION ───────────────────────────────────────────────────────────
   // Check navigation intent – only when no action keywords are present
-  const hasActionKeywords = /\b(on|off|enable|disable|start|stop|add|create|new|register|turn|toggle|jammer)\b/.test(lower);
+  const hasActionKeywords = /\b(on|off|enable|disable|start|stop|add|create|new|register|turn|toggle|jammer|delete|remove|export|download|clear|wipe|erase|how|what|which|explain|summarize|detail|summary)\b/.test(lower);
 
   if (!hasActionKeywords) {
     const navMap = [
@@ -148,6 +149,23 @@ function parseIntent(text) {
     parsed.action = 'add_classroom';
     parsed.roomName = addRoomMatch[1].trim();
     parsed.parentFloorName = addRoomMatch[2] ? addRoomMatch[2].trim() : null;
+    return parsed;
+  }
+
+  // ── USER MANAGEMENT: ADD / DELETE USER ───────────────────────────────────
+  const addUserMatch = /(?:add|create|new)\s+(?:a\s+)?(?:new\s+)?user\s+(.+)/i.exec(original);
+  if (addUserMatch) {
+    parsed.intent = 'add_user';
+    parsed.action = 'add_user';
+    parsed.target = addUserMatch[1].trim(); // Name of user
+    return parsed;
+  }
+
+  const deleteUserMatch = /(?:delete|remove)\s+(?:the\s+)?user\s+(.+)/i.exec(original);
+  if (deleteUserMatch) {
+    parsed.intent = 'delete_user';
+    parsed.action = 'delete_user';
+    parsed.target = deleteUserMatch[1].trim(); // Name of user
     return parsed;
   }
 
@@ -245,12 +263,88 @@ function parseIntent(text) {
     return parsed;
   }
 
+  // ── EXPLAIN / SUMMARIZE REPORT ────────────────────────────────────────────
+  if (/(explain|summarize|detail|summary).*(report|analytics|statistics)/.test(lower)) {
+    parsed.intent = 'analytics_explain_report';
+    parsed.action = 'analytics_explain_report';
+    parsed.route = '/reports';
+    return parsed;
+  }
+
   // ── SEARCH STUDENT ────────────────────────────────────────────────────────
   if (/search.*student/.test(lower) || /find.*student/.test(lower)) {
     parsed.intent = 'search_student';
     parsed.action = 'search_student';
     const query = lower.replace(/search|find|student|for|me|the|a/g, '').trim();
     parsed.target = query || null;
+    return parsed;
+  }
+
+  // ── INFRASTRUCTURE & DEVICE: DELETIONS ──────────────────────────────────
+  const deleteBlockMatch = /(?:delete|remove)\s+(?:the\s+)?block\s+(.+)/i.exec(original);
+  if (deleteBlockMatch) {
+    parsed.intent = 'delete_block';
+    parsed.action = 'delete_block';
+    parsed.blockName = deleteBlockMatch[1].trim();
+    return parsed;
+  }
+
+  const deleteFloorMatch = /(?:delete|remove)\s+(?:the\s+)?floor\s+(.+)/i.exec(original);
+  if (deleteFloorMatch) {
+    parsed.intent = 'delete_floor';
+    parsed.action = 'delete_floor';
+    parsed.floorName = deleteFloorMatch[1].trim();
+    return parsed;
+  }
+
+  const deleteRoomMatch = /(?:delete|remove)\s+(?:the\s+)?(?:classroom|room)\s+(.+)/i.exec(original);
+  if (deleteRoomMatch) {
+    parsed.intent = 'delete_classroom';
+    parsed.action = 'delete_classroom';
+    parsed.roomName = deleteRoomMatch[1].trim();
+    return parsed;
+  }
+
+  if (/(?:delete|remove)\s+(?:the\s+)?device/i.test(lower) && deviceId) {
+    parsed.intent = 'delete_device';
+    parsed.action = 'delete_device';
+    return parsed;
+  }
+
+  // ── DATA MANAGEMENT (CLEAR & EXPORT) ──────────────────────────────────────
+  if (/(?:clear|delete|wipe|erase)\s+(?:all\s+)?(?:logs?|alerts?|detections?|history)/.test(lower)) {
+    parsed.intent = 'clear_logs';
+    parsed.action = 'clear_logs';
+    return parsed;
+  }
+
+  if (/(?:export|download)\s+(?:the\s+)?(?:logs?|alerts?|data|csv)/.test(lower)) {
+    parsed.intent = 'export_logs';
+    parsed.action = 'export_logs';
+    return parsed;
+  }
+
+  // ── CONVERSATIONAL ANALYTICS ──────────────────────────────────────────────
+  if (/(?:how\s+many|what\s+is\s+the\s+number\s+of)\s+(?:nearest|nearby|close)\s+devices?/.test(lower)) {
+    parsed.intent = 'analytics_nearest_devices';
+    parsed.action = 'analytics_nearest_devices';
+    return parsed;
+  }
+  if (/(?:how\s+many|what\s+is\s+the\s+number\s+of)\s+devices?\s+(?:are\s+)?online/.test(lower)) {
+    parsed.intent = 'analytics_online_devices';
+    parsed.action = 'analytics_online_devices';
+    return parsed;
+  }
+
+  if (/(?:how\s+many|what\s+is\s+the\s+number\s+of)\s+(?:alerts?|detections?|logs?)/.test(lower)) {
+    parsed.intent = 'analytics_total_alerts';
+    parsed.action = 'analytics_total_alerts';
+    return parsed;
+  }
+
+  if (/(?:what|which)\s+(?:is\s+the\s+)?(?:most\s+active|busiest)\s+(?:room|classroom)/.test(lower)) {
+    parsed.intent = 'analytics_most_active_room';
+    parsed.action = 'analytics_most_active_room';
     return parsed;
   }
 
@@ -423,29 +517,166 @@ async function handleInfrastructureCreate(parsed, io) {
     };
   }
 
+  if (action === 'delete_block') {
+    if (!blockName) return { success: false, message: 'Please specify the block name to delete.' };
+    const block = await Block.findOne({ blockName: { $regex: new RegExp(`^${blockName}$`, 'i') } });
+    if (!block) return { success: false, message: `Block "${blockName}" not found.` };
+    await Block.findByIdAndDelete(block._id);
+    if (io) io.emit('infrastructureUpdate', { type: 'block', action: 'delete', data: block });
+    return { success: true, message: `Block "${block.blockName}" has been deleted.`, route: '/infrastructure' };
+  }
+
+  if (action === 'delete_floor') {
+    if (!floorName) return { success: false, message: 'Please specify the floor name to delete.' };
+    const floor = await Floor.findOne({ floorName: { $regex: new RegExp(`^${floorName}$`, 'i') } });
+    if (!floor) return { success: false, message: `Floor "${floorName}" not found.` };
+    await Floor.findByIdAndDelete(floor._id);
+    if (io) io.emit('infrastructureUpdate', { type: 'floor', action: 'delete', data: floor });
+    return { success: true, message: `Floor "${floor.floorName}" has been deleted.`, route: '/infrastructure' };
+  }
+
+  if (action === 'delete_classroom') {
+    if (!roomName) return { success: false, message: 'Please specify the room name to delete.' };
+    const room = await Classroom.findOne({ roomName: { $regex: new RegExp(`^${roomName}$`, 'i') } });
+    if (!room) return { success: false, message: `Classroom "${roomName}" not found.` };
+    await Classroom.findByIdAndDelete(room._id);
+    if (io) io.emit('infrastructureUpdate', { type: 'classroom', action: 'delete', data: room });
+    return { success: true, message: `Classroom "${room.roomName}" has been deleted.`, route: '/infrastructure' };
+  }
+
   return { success: false, message: 'Unknown infrastructure action.' };
+}
+
+// ─── ANALYTICS HELPER ─────────────────────────────────────────────────────
+async function handleConversationalAnalytics(parsed) {
+  if (parsed.action === 'analytics_online_devices') {
+    const cutoff = new Date(Date.now() - 60000); // 1 minute ago
+    const count = await ESP32Device.countDocuments({ lastSeen: { $gte: cutoff }, status: 'online' });
+    return { success: true, message: `There are currently ${count} devices online.` };
+  }
+
+  if (parsed.action === 'analytics_nearest_devices') {
+    const cutoff = new Date(Date.now() - 5 * 60000); // last 5 mins
+    const count = await DetectionLog.countDocuments({ timestamp: { $gte: cutoff }, rssi: { $gte: -65 } });
+    return { success: true, message: `I found ${count} devices very close to the sensors in the last 5 minutes.` };
+  }
+
+  if (parsed.action === 'analytics_total_alerts') {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const count = await DetectionLog.countDocuments({ timestamp: { $gte: today } });
+    return { success: true, message: `There have been ${count} Bluetooth alerts recorded today.` };
+  }
+
+  if (parsed.action === 'analytics_most_active_room') {
+    const result = await DetectionLog.aggregate([
+      { $match: { classroomId: { $ne: null } } },
+      { $group: { _id: '$classroomId', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+      { $limit: 1 }
+    ]);
+    
+    if (result.length > 0) {
+      const room = await Classroom.findById(result[0]._id).populate('blockId');
+      if (room) {
+        return { success: true, message: `The most active room is ${room.roomName} in ${room.blockId ? room.blockId.blockName : 'an unknown block'}, with ${result[0].count} total alerts.` };
+      }
+    }
+    return { success: true, message: 'Not enough data to determine the most active room.' };
+  }
+
+  if (parsed.action === 'analytics_explain_report') {
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const alertsToday = await DetectionLog.countDocuments({ timestamp: { $gte: today } });
+    
+    const onlineDevices = await ESP32Device.countDocuments({ status: 'online' });
+    const totalDevices = await ESP32Device.countDocuments();
+    const jammerActive = await ESP32Device.countDocuments({ jammerStatus: 'active' });
+
+    const topRoomResult = await DetectionLog.aggregate([
+      { $match: { classroomId: { $ne: null } } },
+      { $group: { _id: '$classroomId', count: { $sum: 1 } } },
+      { $sort: { count: -1 } },
+      { $limit: 1 }
+    ]);
+
+    let topRoomStr = '';
+    if (topRoomResult.length > 0) {
+      const room = await Classroom.findById(topRoomResult[0]._id).populate('blockId');
+      if (room) {
+        topRoomStr = ` The most active area is ${room.roomName} in ${room.blockId ? room.blockId.blockName : 'an unknown block'}.`;
+      }
+    }
+
+    const message = `Here is your report summary. Out of ${totalDevices} total devices, ${onlineDevices} are currently online, and the jammer is active on ${jammerActive}. Today, we have recorded ${alertsToday} Bluetooth alerts.${topRoomStr}`;
+    return { success: true, message, route: '/reports' };
+  }
+
+  return { success: false, message: 'Analytics query not recognized.' };
 }
 
 // ─── MAIN HANDLER ────────────────────────────────────────────────────────
 exports.processVoice = async (req, res, next) => {
   try {
-    const { text, confirm } = req.body;
+    const { text, confirm, context } = req.body;
     const userId = req.user?.id;
     if (!text) return res.status(400).json({ success: false, message: 'No command text was provided.' });
 
-    const parsed = parseIntent(text);
     const io = req.app.get('io');
 
+    // ── MULTI-TURN CONVERSATION HANDLING ────────────────────────────────
+    if (context && context.intent === 'add_user') {
+      const lowerText = text.toLowerCase();
+      let role = 'examuser'; // default
+      if (lowerText.includes('admin')) role = 'admin';
+      
+      const userName = context.target;
+      const email = `${userName.toLowerCase().replace(/\s+/g, '')}@example.com`;
+      const existingUser = await User.findOne({ email });
+      
+      let responseMessage = '';
+      if (existingUser) {
+        responseMessage = `A user with the email ${email} already exists.`;
+      } else {
+        await User.create({
+          name: userName,
+          email,
+          password: 'password123',
+          role
+        });
+        responseMessage = `Successfully created ${userName} as ${role === 'admin' ? 'an admin' : 'a supervisor'}. Their email is ${email}.`;
+        if (io) io.emit('userUpdate'); 
+      }
+      
+      await VoiceCommand.create({
+        text, intent: 'add_user', action: 'add_user', target: userName,
+        response: { message: responseMessage }, user: userId
+      });
+
+      return res.json({
+        success: true, needsConfirmation: false, needsFollowUp: false,
+        message: responseMessage, route: '/users',
+        parsed: { intent: 'add_user', action: 'add_user', target: userName }
+      });
+    }
+
+    const parsed = parseIntent(text);
+
     // Actions that need confirmation before execution
-    const requiresConfirmation = ['device_off', 'monitoring_off', 'generate_report'].includes(parsed.action);
+    const requiresConfirmation = [
+      'device_off', 'monitoring_off', 'generate_report', 
+      'delete_block', 'delete_floor', 'delete_classroom', 'delete_device', 'delete_user',
+      'clear_logs'
+    ].includes(parsed.action);
 
     if (requiresConfirmation && !confirm) {
-      const actionLabel =
-        parsed.action === 'device_off'
-          ? `turn OFF ${parsed.target === 'all' ? 'all devices' : parsed.deviceId || 'the device'}`
-          : parsed.action === 'monitoring_off'
-          ? `disable monitoring${parsed.deviceId ? ' for ' + parsed.deviceId : ''}`
-          : 'generate a report';
+      let actionLabel = 'perform this action';
+      if (parsed.action === 'device_off') actionLabel = `turn OFF ${parsed.target === 'all' ? 'all devices' : parsed.deviceId || 'the device'}`;
+      if (parsed.action === 'monitoring_off') actionLabel = `disable monitoring${parsed.deviceId ? ' for ' + parsed.deviceId : ''}`;
+      if (parsed.action === 'generate_report') actionLabel = 'generate a report';
+      if (parsed.action === 'clear_logs') actionLabel = 'permanently delete all detection logs';
+      if (parsed.action.startsWith('delete_')) actionLabel = `permanently delete this ${parsed.action.replace('delete_', '')}`;
 
       await VoiceCommand.create({
         text,
@@ -495,7 +726,7 @@ exports.processVoice = async (req, res, next) => {
         return res.json({ success: false, needsConfirmation: false, message: responseMessage, parsed });
       }
 
-    } else if (['add_block', 'add_floor', 'add_classroom'].includes(parsed.action)) {
+    } else if (['add_block', 'add_floor', 'add_classroom', 'delete_block', 'delete_floor', 'delete_classroom'].includes(parsed.action)) {
       const result = await handleInfrastructureCreate(parsed, io);
       responseMessage = result.message;
       if (result.route) route = result.route;
@@ -504,9 +735,55 @@ exports.processVoice = async (req, res, next) => {
         return res.json({ success: false, needsConfirmation: false, message: responseMessage, parsed });
       }
 
-    } else if (parsed.action === 'generate_report') {
-      responseMessage = 'Generating the requested report. Please check the Reports page.';
-      route = '/reports';
+    } else if (parsed.action === 'add_user') {
+      // Start multi-turn flow
+      return res.json({
+        success: true,
+        needsFollowUp: true,
+        message: `Should ${parsed.target} be an admin or a supervisor?`,
+        context: {
+          intent: 'add_user',
+          target: parsed.target
+        },
+        parsed
+      });
+
+    } else if (parsed.action === 'delete_device') {
+      const d = await ESP32Device.findOne({ deviceId: parsed.deviceId });
+      if (d) {
+        await ESP32Device.findByIdAndDelete(d._id);
+        responseMessage = `Device ${parsed.deviceId} has been deleted.`;
+        if (io) io.emit('deviceUpdate', { action: 'delete', deviceId: d._id });
+      } else {
+        responseMessage = `Could not find device ${parsed.deviceId} to delete.`;
+      }
+      route = '/devices';
+
+    } else if (parsed.action === 'delete_user') {
+      const u = await User.findOne({ name: { $regex: new RegExp(`^${parsed.target}$`, 'i') } });
+      if (u) {
+        await User.findByIdAndDelete(u._id);
+        responseMessage = `User ${parsed.target} has been permanently deleted.`;
+        if (io) io.emit('userUpdate');
+      } else {
+        responseMessage = `Could not find a user named ${parsed.target}.`;
+      }
+      route = '/users';
+
+    } else if (parsed.action === 'clear_logs') {
+      await DetectionLog.deleteMany({});
+      responseMessage = 'All detection logs have been permanently wiped.';
+      if (io) io.emit('logsCleared'); // Frontend will listen for this to refresh the page
+      route = '/logs';
+
+    } else if (parsed.action === 'export_logs') {
+      responseMessage = 'Exporting detection logs as CSV now.';
+      if (io) io.emit('triggerExport'); // Frontend will listen for this to trigger download
+      route = '/logs';
+
+    } else if (parsed.action.startsWith('analytics_')) {
+      const result = await handleConversationalAnalytics(parsed);
+      responseMessage = result.message;
 
     } else if (parsed.action === 'find_nearest') {
       if (parsed.macAddress) {

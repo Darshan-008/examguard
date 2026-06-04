@@ -2,17 +2,10 @@
  * =====================================================
  * Bluetooth Detection Monitoring System — ESP32 Firmware
  * =====================================================
- * Board  : ESP32 DevKit V1
- * Purpose: Scan Bluetooth devices continuously and send
- *          detection logs to the backend REST API.
- *          Receive jammer ON/OFF commands via heartbeat.
- *
- * Libraries required (install via Arduino Library Manager):
- *   - ArduinoJson  (by Benoit Blanchon)
- *   - HTTPClient   (built-in ESP32)
- *   - BluetoothSerial (built-in ESP32)
- *
- * Board Manager: esp32 by Espressif Systems
+ * Updates: 
+ * - Normalized MAC addresses to UPPERCASE
+ * - Optimized BLE Scan Window for Name Discovery
+ * - Extended Classic BT Inquiry Duration
  * =====================================================
  */
 
@@ -31,10 +24,8 @@
 // ─── CONFIGURATION ────────────────────────────────────────────────────────────
 const char* WIFI_SSID       = "Iqoo";
 const char* WIFI_PASSWORD   = "123456789";
- // Render URL
-const char* BACKEND_URL     = "https://examguard-backend-c4oe.onrender.com"; // Render URL
-const char* DEVICE_ID       = "ESP32-A101";                 // Must match DB deviceId
-const char* CLASSROOM_ID    = "";                           // MongoDB Classroom _id (optional)
+const char* BACKEND_URL     = "http://10.117.180.134:5000";  // Your Backend IP
+const char* DEVICE_ID       = "ESP32-A101";                 // Must match DB
 
 const int   SCAN_INTERVAL_MS    = 15000;  // 15 seconds between scans
 const int   HEARTBEAT_INTERVAL  = 30000;  // Heartbeat every 30 seconds
@@ -43,8 +34,6 @@ const int   JAMMER_PIN          = 2;      // GPIO pin for jammer relay control
 
 // ─── GLOBALS ──────────────────────────────────────────────────────────────────
 bool jammerActive   = false;
-bool monitoringActive = true;
-bool wifiConnected  = false;
 unsigned long lastHeartbeat  = 0;
 unsigned long lastScan       = 0;
 
@@ -57,63 +46,46 @@ void connectWiFi() {
     delay(500); Serial.print("."); retries++;
   }
   if (WiFi.status() == WL_CONNECTED) {
-    wifiConnected = true;
     Serial.printf("\n[WiFi] Connected! IP: %s\n", WiFi.localIP().toString().c_str());
   } else {
-    Serial.println("\n[WiFi] Connection failed. Will retry...");
-    wifiConnected = false;
+    Serial.println("\n[WiFi] Connection failed. Retrying...");
   }
 }
 
 // ─── SEND DETECTION TO BACKEND ────────────────────────────────────────────────
-void sendDetection(const char* macAddress, int rssi, const char* deviceName, uint32_t cod = 0, uint16_t appearance = 0) {
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("[API] WiFi disconnected, skipping detection");
-    return;
-  }
+void sendDetection(const char* macAddress, int rssi, const char* deviceName) {
+  if (WiFi.status() != WL_CONNECTED) return;
 
   HTTPClient http;
   String url = String(BACKEND_URL) + "/api/detection";
   http.begin(url);
-  http.setInsecure(); // Required for HTTPS
-  http.setTimeout(10000); // 10 second timeout
   http.addHeader("Content-Type", "application/json");
 
-  StaticJsonDocument<512> doc;
+  StaticJsonDocument<256> doc;
   doc["deviceId"]    = DEVICE_ID;
-  doc["macAddress"]  = macAddress;
+  doc["macAddress"]  = macAddress; // Backend will receive Uppercase
   doc["rssi"]        = rssi;
   doc["deviceName"]  = deviceName;
-  if (cod != 0) doc["deviceClass"] = cod;
-  if (appearance != 0) doc["appearance"] = appearance;
-  if (strlen(CLASSROOM_ID) > 0) doc["classroomId"] = CLASSROOM_ID;
 
   String body;
   serializeJson(doc, body);
 
   int code = http.POST(body);
-  String response = http.getString();
-  
   if (code == 201 || code == 200) {
-    Serial.printf("[API] Detection sent: %s (RSSI: %d)\n", macAddress, rssi);
+    Serial.printf("[API] Sent: %s (%s)\n", macAddress, deviceName);
   } else {
-    Serial.printf("[API] POST %s failed: HTTP %d | Response: %s\n", url.c_str(), code, response.c_str());
+    Serial.printf("[API] Failed: HTTP %d\n", code);
   }
   http.end();
 }
 
 // ─── HEARTBEAT ────────────────────────────────────────────────────────────────
 void sendHeartbeat() {
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("[Heartbeat] WiFi disconnected, skipping");
-    return;
-  }
+  if (WiFi.status() != WL_CONNECTED) return;
 
   HTTPClient http;
   String url = String(BACKEND_URL) + "/api/devices/heartbeat";
   http.begin(url);
-  http.setInsecure(); // Required for HTTPS
-  http.setTimeout(10000); // 10 second timeout
   http.addHeader("Content-Type", "application/json");
 
   StaticJsonDocument<128> doc;
@@ -124,103 +96,21 @@ void sendHeartbeat() {
   serializeJson(doc, body);
 
   int code = http.POST(body);
-  
   if (code == 200) {
     String res = http.getString();
-    StaticJsonDocument<256> resp;
-    DeserializationError error = deserializeJson(resp, res);
-    
-    if (error) {
-      Serial.printf("[Heartbeat] JSON parse error: %s | Raw: %s\n", error.c_str(), res.c_str());
-    } else {
-      bool shouldJam = (String(resp["jammerStatus"].as<const char*>()) == "active");
-      if (shouldJam != jammerActive) {
-        jammerActive = shouldJam;
-        digitalWrite(JAMMER_PIN, jammerActive ? HIGH : LOW);
-      }
-      
-      bool shouldMonitor = (String(resp["monitoringStatus"].as<const char*>()) == "active");
-      if (shouldMonitor != monitoringActive) {
-        monitoringActive = shouldMonitor;
-        Serial.printf("[System] Monitoring: %s\n", monitoringActive ? "ENABLED" : "DISABLED");
-      }
-
-      if (resp.containsKey("pendingCommand") && !resp["pendingCommand"].isNull()) {
-        JsonObject cmd = resp["pendingCommand"].as<JsonObject>();
-        const char* action = cmd["action"] | cmd["type"] | "";
-        const char* macAddress = cmd["macAddress"] | "";
-        String actionStr = String(action);
-
-        Serial.printf("[Heartbeat] Pending command: %s %s\n", action, macAddress);
-
-        if (actionStr == "locate") {
-          Serial.println("[Command] Locate command received");
-        } else if (actionStr == "start") {
-          monitoringActive = true;
-          Serial.println("[Command] Start monitoring");
-        } else if (actionStr == "stop") {
-          monitoringActive = false;
-          jammerActive = false;
-          digitalWrite(JAMMER_PIN, LOW);
-          Serial.println("[Command] Stop monitoring and jammer");
-        } else if (actionStr == "toggle_jammer") {
-          jammerActive = !jammerActive;
-          digitalWrite(JAMMER_PIN, jammerActive ? HIGH : LOW);
-          Serial.printf("[Command] Toggle jammer: %s\n", jammerActive ? "ON" : "OFF");
-        } else if (actionStr == "toggle_monitoring") {
-          monitoringActive = !monitoringActive;
-          if (!monitoringActive) {
-            jammerActive = false;
-            digitalWrite(JAMMER_PIN, LOW);
-          }
-          Serial.printf("[Command] Toggle monitoring: %s\n", monitoringActive ? "ON" : "OFF");
-        }
-      }
-
-      Serial.printf("[Heartbeat] OK | Jammer: %s | Monitoring: %s\n", 
-        jammerActive ? "ON" : "OFF", monitoringActive ? "ON" : "OFF");
+    StaticJsonDocument<128> resp;
+    deserializeJson(resp, res);
+    bool shouldJam = (String(resp["jammerStatus"].as<const char*>()) == "active");
+    if (shouldJam != jammerActive) {
+      jammerActive = shouldJam;
+      digitalWrite(JAMMER_PIN, jammerActive ? HIGH : LOW);
     }
-  } else {
-    String response = http.getString();
-    Serial.printf("[Heartbeat] POST %s failed: HTTP %d | Response: %s\n", url.c_str(), code, response.c_str());
   }
   http.end();
 }
 
-// ─── HEALTH CHECK (to debug connectivity) ──────────────────────────────────────
-void checkBackendHealth() {
-  if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("[Health] WiFi disconnected");
-    return;
-  }
-
-  Serial.printf("[Health] Checking: %s/api/health\n", BACKEND_URL);
-  
-  HTTPClient http;
-  String url = String(BACKEND_URL) + "/api/health";
-  http.begin(url);
-  http.setInsecure();
-  http.setTimeout(10000);
-
-  int code = http.GET();
-  String response = http.getString();
-
-  if (code == 200) {
-    Serial.printf("[Health] ✓ Backend is reachable: %s\n", response.c_str());
-  } else {
-    Serial.printf("[Health] ✗ Backend unreachable: HTTP %d | %s\n", code, response.c_str());
-  }
-  http.end();
-}
-
-// ─── CLASSIC BLUETOOTH SCAN ───────────────────────────────────────────────────
-// Callback for discovered devices
-static esp_bt_gap_cb_param_t::disc_res_param* discoveredDevices[20];
-static int discoveredCount = 0;
-
+// ─── CLASSIC BLUETOOTH CALLBACK ──────────────────────────────────────────────
 void btGapCallback(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t* param) {
-  if (!monitoringActive) return; // Ignore if monitoring is OFF
-
   if (event == ESP_BT_GAP_DISC_RES_EVT) {
     char mac[18];
     snprintf(mac, sizeof(mac), "%02X:%02X:%02X:%02X:%02X:%02X",
@@ -228,99 +118,71 @@ void btGapCallback(esp_bt_gap_cb_event_t event, esp_bt_gap_cb_param_t* param) {
       param->disc_res.bda[3], param->disc_res.bda[4], param->disc_res.bda[5]);
 
     int rssi = -100;
-    char nameBuf[64] = "Unknown Device";
-    uint32_t cod = 0;
+    char nameBuf[64] = "";
 
     for (int i = 0; i < param->disc_res.num_prop; i++) {
       if (param->disc_res.prop[i].type == ESP_BT_GAP_DEV_PROP_RSSI) rssi = *(int8_t*)param->disc_res.prop[i].val;
       if (param->disc_res.prop[i].type == ESP_BT_GAP_DEV_PROP_BDNAME) strncpy(nameBuf, (char*)param->disc_res.prop[i].val, sizeof(nameBuf) - 1);
-      if (param->disc_res.prop[i].type == ESP_BT_GAP_DEV_PROP_COD) cod = *(uint32_t*)param->disc_res.prop[i].val;
     }
 
     if (rssi >= RSSI_THRESHOLD) {
-      Serial.printf("[BT] Found: %s | RSSI: %d | CoD: 0x%06X\n", mac, rssi, cod);
-      sendDetection(mac, rssi, nameBuf, cod, 0);
-    }
-  }
-  else if (event == ESP_BT_GAP_DISC_STATE_CHANGED_EVT) {
-    if (param->disc_st_chg.state == ESP_BT_GAP_DISCOVERY_STOPPED) {
-      Serial.println("[BT] Scan complete.");
+      String finalName = (strlen(nameBuf) > 0) ? String(nameBuf) : "Unknown Device";
+      sendDetection(mac, rssi, finalName.c_str());
     }
   }
 }
 
-// BLE Callback
+// ─── BLE CALLBACK ─────────────────────────────────────────────────────────────
 class MyAdvertisedDeviceCallbacks: public BLEAdvertisedDeviceCallbacks {
     void onResult(BLEAdvertisedDevice advertisedDevice) {
-        if (!monitoringActive) return; // Ignore if monitoring is OFF
-        
         if (advertisedDevice.getRSSI() >= RSSI_THRESHOLD) {
             String mac = advertisedDevice.getAddress().toString().c_str();
+            mac.toUpperCase(); // Ensure casing matches Backend OUI list
+            
             int rssi = advertisedDevice.getRSSI();
             String name = advertisedDevice.getName().c_str();
-            uint16_t appearance = advertisedDevice.getAppearance();
             if (name == "") name = "BLE Device";
             
-            Serial.printf("[BLE] Found: %s | RSSI: %d | App: %d\n", mac.c_str(), rssi, appearance);
-            sendDetection(mac.c_str(), rssi, name.c_str(), 0, appearance);
+            sendDetection(mac.c_str(), rssi, name.c_str());
         }
     }
 };
 
 void startBluetoothScan() {
-  // 1. BLE Scan
-  Serial.println("[BLE] Starting scan...");
+  // 1. BLE Scan (5 seconds)
+  Serial.println("[BLE] Scanning...");
   BLEScan* pBLEScan = BLEDevice::getScan();
-  pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
-  pBLEScan->setActiveScan(true);
-  pBLEScan->start(5, false); // Scan for 5 seconds
+  pBLEScan->start(5, false); 
 
-  // 2. Classic BT Scan
-  Serial.println("[BT] Initiating discovery...");
-  esp_err_t err = esp_bt_gap_start_discovery(ESP_BT_INQ_MODE_GENERAL_INQUIRY, 5, 0); // 5 * 1.28s
-  if (err != ESP_OK) {
-    Serial.printf("[BT] Discovery start failed: %s\n", esp_err_to_name(err));
-  }
+  // 2. Classic BT Scan (Increase to 10 for better name discovery)
+  Serial.println("[BT] Discovering...");
+  esp_bt_gap_start_discovery(ESP_BT_INQ_MODE_GENERAL_INQUIRY, 10, 0); 
 }
 
 // ─── SETUP ────────────────────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
-  Serial.println("\n[System] Bluetooth Detection Monitor Starting...");
-  Serial.printf("[Config] Backend URL: %s\n", BACKEND_URL);
-  Serial.printf("[Config] Device ID: %s\n", DEVICE_ID);
-
-  // Jammer relay pin
   pinMode(JAMMER_PIN, OUTPUT);
   digitalWrite(JAMMER_PIN, LOW);
 
-  // WiFi
   connectWiFi();
-  
-  // Test backend connectivity
-  delay(1000);
-  checkBackendHealth();
 
-  // Initialize Bluetooth controller
+  // Init Classic BT
   esp_bt_controller_config_t bt_cfg = BT_CONTROLLER_INIT_CONFIG_DEFAULT();
-  if (esp_bt_controller_init(&bt_cfg) != ESP_OK) {
-    Serial.println("[BT] Controller init failed!"); return;
-  }
-  if (esp_bt_controller_enable(ESP_BT_MODE_CLASSIC_BT) != ESP_OK) {
-    Serial.println("[BT] Controller enable failed!"); return;
-  }
-  if (esp_bluedroid_init() != ESP_OK) {
-    Serial.println("[BT] Bluedroid init failed!"); return;
-  }
-  if (esp_bluedroid_enable() != ESP_OK) {
-    Serial.println("[BT] Bluedroid enable failed!"); return;
-  }
-
+  esp_bt_controller_init(&bt_cfg);
+  esp_bt_controller_enable(ESP_BT_MODE_CLASSIC_BT);
+  esp_bluedroid_init();
+  esp_bluedroid_enable();
   esp_bt_gap_register_callback(btGapCallback);
   esp_bt_gap_set_scan_mode(ESP_BT_CONNECTABLE, ESP_BT_GENERAL_DISCOVERABLE);
 
   // Init BLE
   BLEDevice::init(DEVICE_ID);
+  BLEScan* pBLEScan = BLEDevice::getScan();
+  pBLEScan->setAdvertisedDeviceCallbacks(new MyAdvertisedDeviceCallbacks());
+  pBLEScan->setActiveScan(true);  // Required for name discovery
+  pBLEScan->setInterval(1349);   // Recommended timing for scan response
+  pBLEScan->setWindow(449);
 
   Serial.println("[System] Monitoring Started...");
   sendHeartbeat();
@@ -330,25 +192,21 @@ void setup() {
 void loop() {
   unsigned long now = millis();
 
-  // Reconnect WiFi if dropped
   if (WiFi.status() != WL_CONNECTED) {
-    Serial.println("[WiFi] Reconnecting...");
     connectWiFi();
     delay(2000);
     return;
   }
 
-  // Periodic Bluetooth scan
-  if (monitoringActive && (now - lastScan >= SCAN_INTERVAL_MS)) {
+  if (now - lastScan >= SCAN_INTERVAL_MS) {
     lastScan = now;
     startBluetoothScan();
   }
 
-  // Periodic heartbeat
   if (now - lastHeartbeat >= HEARTBEAT_INTERVAL) {
     lastHeartbeat = now;
     sendHeartbeat();
   }
-
+  
   delay(100);
 }

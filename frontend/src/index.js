@@ -3,15 +3,17 @@ import ReactDOM from 'react-dom/client';
 import './index.css';
 import App from './App';
 import { AuthProvider } from './context/AuthContext';
+import { ThemeProvider } from './context/ThemeContext';
 import { Toaster } from 'react-hot-toast';
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 root.render(
   <React.StrictMode>
-    <AuthProvider>
-      <App />
-      <Toaster
-        position="top-right"
+    <ThemeProvider>
+      <AuthProvider>
+        <App />
+        <Toaster
+          position="top-right"
         toastOptions={{
           duration: 4000,
           style: {
@@ -25,6 +27,9 @@ root.render(
           error: { iconTheme: { primary: '#ef4444', secondary: '#1e293b' } },
         }}
       />
-    </AuthProvider>
+        }}
+      />
+      </AuthProvider>
+    </ThemeProvider>
   </React.StrictMode>
 );

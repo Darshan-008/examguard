@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { postDetection, getLogs, getTodayStats, getAnalytics } = require('../controllers/detectionController');
+const { postDetection, getLogs, getTodayStats, getAnalytics, getJammerStats } = require('../controllers/detectionController');
 const { protect } = require('../middleware/auth');
 
 // Public endpoint for ESP32
@@ -10,6 +10,7 @@ router.use(protect);
 router.get('/logs', getLogs);
 router.get('/stats/today', getTodayStats);
 router.get('/analytics', getAnalytics);
+router.get('/jammer-stats', getJammerStats);
 router.delete('/logs', require('../middleware/auth').adminOnly, require('../controllers/detectionController').clearLogs);
 
 module.exports = router;

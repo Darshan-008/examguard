@@ -23,7 +23,7 @@ const NAV_COMMANDS = [
   { pattern: /\b(reports?|analytics|statistics)\b/i,            route: '/reports',        label: 'Reports' },
 ];
 
-const ACTION_KEYWORDS = /\b(on|off|enable|disable|start|stop|add|create|new|register|turn|toggle|jammer|delete|remove)\b/i;
+const ACTION_KEYWORDS = /\b(on|off|enable|disable|start|stop|add|create|new|register|turn|toggle|jammer|delete|remove|export|download|clear|wipe|erase|how|what|which|explain|summarize|detail|summary)\b/i;
 const isLogoutCommand = (t) => /\b(log\s*out|sign\s*out|sign\s*off)\b/i.test(t);
 const isWakeOnly     = (t) => /^\s*(hey\s+examguard|examguard)\s*$/i.test(t);
 const stripWakeWord  = (t) => t.replace(/^\s*(hey\s+examguard|examguard)\b\s*/i, '').trim();
@@ -50,7 +50,7 @@ export default function VoiceControl() {
   const recognitionStartedRef = useRef(false);
   const processingRef         = useRef(false);
   const speakingRef           = useRef(false);       // true while TTS is playing
-  const awaitingConfirmRef    = useRef(false);       // stores pending command string or false
+  const conversationContextRef = useRef(null);       // stores multi-turn conversation context or confirmation data
   const pendingRestartRef     = useRef(false);       // restart queued while speaking/processing
 
   // Stable function refs – updated every render so callbacks never go stale
@@ -119,7 +119,7 @@ export default function VoiceControl() {
   }, [startRecognition]);
 
   // ─── Process a single command ────────────────────────────────────────────
-  const processCommand = useCallback(async (commandText) => {
+  const processCommand = useCallback(async (commandText, context = null) => {
     const lower = commandText.toLowerCase();
     setStatusMessage('Processing...');
     setPulse(true);
@@ -145,13 +145,13 @@ export default function VoiceControl() {
 
     // BACKEND
     try {
-      const response = await api.post('/voice/process', { text: commandText });
+      const response = await api.post('/voice/process', { text: commandText, context });
       const data = response.data;
 
-      if (data.needsConfirmation) {
-        awaitingConfirmRef.current = commandText;
-        setStatusMessage('Awaiting confirmation...');
-        speak(`${data.message} Say yes to confirm or no to cancel.`);
+      if (data.needsConfirmation || data.needsFollowUp) {
+        conversationContextRef.current = data.context || { text: commandText, isConfirmation: true };
+        setStatusMessage(data.needsFollowUp ? 'Awaiting answer...' : 'Awaiting confirmation...');
+        speak(`${data.message} ${data.needsConfirmation ? 'Say yes to confirm or no to cancel.' : ''}`);
         return;
       }
 
@@ -190,7 +190,7 @@ export default function VoiceControl() {
       setStatusMessage('Cancelled');
       speak('Okay, cancelled.');
     }
-    awaitingConfirmRef.current = false;
+    conversationContextRef.current = null;
   }, [speak]);
 
   // ─── Handle a finalized transcript ──────────────────────────────────────
@@ -203,7 +203,7 @@ export default function VoiceControl() {
 
     // Wake word only
     if (isWakeOnly(cleanedText)) {
-      awaitingConfirmRef.current = false;
+      conversationContextRef.current = null;
       setStatusMessage("Listening for your command...");
       speak("Yes, I'm listening. What would you like to do?");
       return;
@@ -211,12 +211,16 @@ export default function VoiceControl() {
 
     if (!commandText) return;
 
-    // Confirmation response
-    if (awaitingConfirmRef.current) {
-      const pending = awaitingConfirmRef.current;
-      awaitingConfirmRef.current = false;
+    // Confirmation or follow-up response
+    if (conversationContextRef.current) {
+      const context = conversationContextRef.current;
+      conversationContextRef.current = null;
       processingRef.current = true;
-      await handleConfirmation(commandText, pending);
+      if (context.isConfirmation) {
+        await handleConfirmation(commandText, context.text);
+      } else {
+        await processCommand(commandText, context);
+      }
       processingRef.current = false;
       setStatusMessage(listeningRef.current ? 'Listening...' : 'Voice assistant stopped');
       return;
@@ -324,7 +328,7 @@ export default function VoiceControl() {
     listeningRef.current   = true;
     processingRef.current  = false;
     speakingRef.current    = false;
-    awaitingConfirmRef.current = false;
+    conversationContextRef.current = null;
     setListening(true);
     setRecognizedText('');
     setLastCommand('');
@@ -338,7 +342,7 @@ export default function VoiceControl() {
     listeningRef.current       = false;
     processingRef.current      = false;
     speakingRef.current        = false;
-    awaitingConfirmRef.current = false;
+    conversationContextRef.current = null;
     setListening(false);
     setStatusMessage('Voice assistant off');
     setRecognizedText('');

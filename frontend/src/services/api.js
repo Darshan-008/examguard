@@ -74,6 +74,7 @@ export const detectionAPI = {
   getTodayStats: () => api.get('/detection/stats/today'),
   getAnalytics: (days) => api.get('/detection/analytics', { params: { days } }),
   clearLogs: () => api.delete('/detection/logs'),
+  getJammerStats: () => api.get('/detection/jammer-stats'),
 };
 
 // Dashboard

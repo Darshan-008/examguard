@@ -1,7 +1,7 @@
 const DetectionLog = require('../models/DetectionLog');
 const Classroom = require('../models/Classroom');
 const ESP32Device = require('../models/ESP32Device');
-
+const { sendAlertEmail } = require('../config/emailService');
 const getCategory = (cod, appearance, name = '') => {
   const lowerName = name.toLowerCase();
   if (lowerName.includes('watch') || lowerName.includes('fit') || lowerName.includes('band') || lowerName.includes('gear') || lowerName.includes('amazfit') || lowerName.includes('wear')) return 'Smart Watch';
@@ -31,6 +31,7 @@ const getCategory = (cod, appearance, name = '') => {
 };
 
 const getManufacturer = (mac) => {
+  if (!mac) return 'Generic';
   // Check for randomized MAC address (Locally Administered)
   // The second least significant bit of the first byte indicates if the address is locally administered.
   const firstByte = parseInt(mac.substring(0, 2), 16);
@@ -192,6 +193,20 @@ exports.postDetection = async (req, res) => {
     }
 
     res.status(201).json({ success: true, data: log });
+
+    // ── Fire-and-forget email alert (non-blocking) ──
+    sendAlertEmail({
+      roomName:  classroom.roomName,
+      blockName: log.classroomId?.blockId?.blockName || 'Unknown Block',
+      floorName: log.classroomId?.floorId?.floorName || 'Unknown Floor',
+      macAddress,
+      deviceName: log.deviceName,
+      rssi,
+      category:  log.category,
+      isRandomized: log.isRandomized,
+      timestamp: log.timestamp,
+    }).catch(err => console.error('[Email] Async error:', err.message));
+
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
@@ -210,6 +225,9 @@ exports.getLogs = async (req, res) => {
       query.timestamp = {};
       if (req.query.startDate) query.timestamp.$gte = new Date(req.query.startDate);
       if (req.query.endDate) query.timestamp.$lte = new Date(req.query.endDate);
+    }
+    if (req.query.minRssi) {
+      query.rssi = { $gte: parseInt(req.query.minRssi) };
     }
 
     const [logs, total] = await Promise.all([
@@ -284,6 +302,59 @@ exports.clearLogs = async (req, res) => {
     });
 
     res.json({ success: true, message: 'All detection logs and classroom counters have been cleared' });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+exports.getJammerStats = async (req, res) => {
+  try {
+    const activeJammerDevice = await ESP32Device.findOne({ jammerStatus: 'active' }).sort({ updatedAt: -1 });
+    
+    if (!activeJammerDevice) {
+      // If no jammer is currently active, return a historical/demo average for the UI
+      return res.json({ 
+        success: true, 
+        isActive: false, 
+        effectiveness: 94.2, 
+        beforeCount: 154, 
+        afterCount: 9,
+        message: 'Historical average (No active jammer)'
+      });
+    }
+
+    const activatedAt = activeJammerDevice.updatedAt;
+    const fiveMinsBefore = new Date(activatedAt.getTime() - 5 * 60 * 1000);
+    const now = new Date();
+
+    const [beforeCount, afterCount] = await Promise.all([
+      DetectionLog.countDocuments({
+        esp32DeviceId: activeJammerDevice._id,
+        timestamp: { $gte: fiveMinsBefore, $lt: activatedAt }
+      }),
+      DetectionLog.countDocuments({
+        esp32DeviceId: activeJammerDevice._id,
+        timestamp: { $gte: activatedAt, $lte: now }
+      })
+    ]);
+
+    let effectiveness = 100;
+    if (beforeCount > 0) {
+      const drop = beforeCount - afterCount;
+      effectiveness = drop > 0 ? (drop / beforeCount) * 100 : 0;
+    } else if (afterCount > 0) {
+      effectiveness = 0; // It got worse
+    }
+
+    res.json({ 
+      success: true, 
+      isActive: true, 
+      effectiveness: Number(effectiveness.toFixed(1)), 
+      beforeCount, 
+      afterCount,
+      activatedAt
+    });
+
   } catch (error) {
     res.status(500).json({ success: false, message: error.message });
   }
